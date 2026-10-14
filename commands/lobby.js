@@ -1057,29 +1057,24 @@ function startLobby(docId) {
         findRoom(doc).then((room) => {
           findRoomChannel(doc, room.number).then(async (roomChannel) => {
             // remove all players from their other lobbies
-            for (p in doc.players) {
-              const playerLobbies = await Lobby.find({ 
-                _id: { $ne: doc._id }, 
-                players: doc.players[p]
+            for (const playerId of doc.players) {
+              const playerLobbies = await Lobby.find({
+                _id: { $ne: doc._id },
+                players: playerId,
               });
 
-              for (l in playerLobbies) {
-                let lobbyMessage = await client.guilds.cache
-                  .get(playerLobbies[l].guild).channels.cache
-                  .get(playerLobbies[l].channel).messages
-                  .fetch(playerLobbies[l].message);
+              for (const playerLobby of playerLobbies) {
+                const lobbyMessage = await client.guilds.cache
+                  .get(playerLobby.guild).channels.cache
+                  .get(playerLobby.channel).messages
+                  .fetch(playerLobby.message);
 
-                let reaction = {
+                const reaction = {
                   message: lobbyMessage,
                   users: null,
                 };
 
-                let user = client.users.cache.get(doc.players[p]);
-                if (!user) {
-                  continue;
-                }
-
-                await mogi(reaction, user, true);
+                await mogi(reaction, { id: playerId }, true);
               }
             }
 
@@ -2458,7 +2453,7 @@ async function mogi(reaction, user, removed = false) {
       notificationChannel = await guild.channels.create(config.channels.matchmaking_notifications_channel);
     }
 
-    Lobby.findOne(conditions).then(async (doc) => {
+    return Lobby.findOne(conditions).then(async (doc) => {
       if (doc) {
         const errors = [];
 
@@ -2562,7 +2557,7 @@ async function mogi(reaction, user, removed = false) {
         }
 
         // eslint-disable-next-line max-len,no-shadow
-        lock.acquire(doc._id, async () => Lobby.findOne({ _id: doc._id }).then(async (doc) => {
+        return lock.acquire(doc._id, async () => Lobby.findOne({ _id: doc._id }).then(async (doc) => {
           let players = Array.from(doc.players);
           const playersCount = players.length;
 
@@ -2903,7 +2898,7 @@ async function mogi(reaction, user, removed = false) {
 
           doc.players = players;
 
-          if (errors.length > 0) {
+          if (errors.length > 0 && !removed) {
             let out = 'You cannot join the lobby for the following reasons:\n\n';
             out += errors.map((e, i) => `${i + 1}. ${e}`).join('\n');
 
@@ -2924,12 +2919,12 @@ async function mogi(reaction, user, removed = false) {
               if (count >= doc.maxPlayerCount) {
                 startLobby(doc.id);
               } else {
-                message.edit({
+                await message.edit({
                   embed: await getEmbed(doc, players),
                 });
               }
             } else {
-              message.edit({
+              await message.edit({
                 embed: await getEmbed(doc),
               });
             }
