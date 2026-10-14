@@ -61,6 +61,7 @@ const {
   getRoomChannel,
   clearRoomMemberPermissions,
   releaseRoom,
+  resumeRoomCleanups,
 } = require('../utils/lobbyRoomPermissions');
 
 const {
@@ -564,6 +565,8 @@ function findRoom(lobby) {
       });
     }
 
+    // Claiming a room ends the previous lobby's chat grace period immediately.
+    if (doc.cleanupAt) await releaseRoom(client.guilds.cache.get(lobby.guild), doc);
     doc.lobby = lobby.id;
     return doc.save();
   });
@@ -1434,7 +1437,7 @@ function findLobby(lobbyID, isStaff, message, callback) {
   }
 }
 
-function deleteLobby(doc, message, sendMessage = true, messageDeleted = false) {
+function deleteLobby(doc, message, sendMessage = true, messageDeleted = false, { delayRoomCleanup = false } = {}) {
   const guild = client.guilds.cache.get(doc.guild);
   return withRoomLock(doc.guild, async () => {
     // Both !l end and messageDelete can arrive for the same lobby. Re-read under
@@ -1442,11 +1445,15 @@ function deleteLobby(doc, message, sendMessage = true, messageDeleted = false) {
     doc = await Lobby.findOne({ _id: doc.id });
     if (!doc) return false;
     const room = await Room.findOne({ lobby: doc.id, guild: doc.guild });
-    const channel = room ? await releaseRoom(guild, room) : null;
+    const delayCleanup = delayRoomCleanup && doc.started && !messageDeleted;
+    const channel = room ? await releaseRoom(guild, room, { delayCleanup }) : null;
 
     let endMessage = 'Lobby ended.';
     if (doc.started && doc.ranked) {
       endMessage += ' Don\'t forget to submit your scores.';
+    }
+    if (channel && delayCleanup) {
+      endMessage += ' Chat stays open for 5 minutes, or until another lobby reserves this room.';
     }
 
     if (doc.started && !messageDeleted) {
@@ -2047,7 +2054,7 @@ module.exports = {
               // eslint-disable-next-line consistent-return
               Room.findOne({ lobby: doc.id }).then((room) => {
                 if (!room) {
-                  return deleteLobby(doc, msg);
+                  return deleteLobby(doc, msg, true, false, { delayRoomCleanup: true });
                 }
 
                 // eslint-disable-next-line max-len
@@ -2070,7 +2077,7 @@ module.exports = {
                         return roomChannel.error('Command cancelled. Stop abusing staff powers.');
                       }
 
-                      deleteLobby(doc, msg);
+                      deleteLobby(doc, msg, true, false, { delayRoomCleanup: true });
                     }).catch(() => {
                       voteMessage.channel.error('Command cancelled.');
                     });
@@ -2078,10 +2085,10 @@ module.exports = {
                 }
               });
             } else {
-              deleteLobby(doc, msg);
+              deleteLobby(doc, msg, true, false, { delayRoomCleanup: true });
             }
           } else {
-            return deleteLobby(doc, msg);
+            return deleteLobby(doc, msg, true, false, { delayRoomCleanup: true });
           }
         });
         break;
@@ -2980,6 +2987,10 @@ client.on('messageReactionRemove', async (reaction, user) => {
 
   await mogi(reaction, user, true);
 });
+
+// Recover pending deadlines after restart, and retry recovery if its database read failed.
+client.on('ready', () => resumeRoomCleanups(client).catch(console.error));
+new CronJob('* * * * *', () => resumeRoomCleanups(client).catch(console.error)).start();
 
 client.on('messageDelete', async (message) => {
   // Deleted messages cannot be fetched; partials already contain the IDs needed below.

@@ -6,6 +6,7 @@ const Room = new Schema({
   guild: String,
   number: Number,
   lobby: { type: Schema.Types.ObjectId, ref: 'lobbies', default: null },
+  cleanupAt: { type: Date, default: null },
 });
 
 module.exports.Room = model('room', Room);
