@@ -2968,15 +2968,7 @@ client.on('messageReactionRemove', async (reaction, user) => {
 });
 
 client.on('messageDelete', async (message) => {
-  if (message.partial) {
-    try {
-      await message.fetch();
-    } catch (error) {
-      // eslint-disable-next-line no-console
-      console.log('Something went wrong when fetching the message: ', error);
-    }
-  }
-
+  // Deleted messages cannot be fetched; partials already contain the IDs needed below.
   const conditions = { message: message.id };
 
   Lobby.findOne(conditions).then(async (doc) => {
