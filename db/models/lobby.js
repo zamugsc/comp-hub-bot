@@ -192,6 +192,9 @@ const Lobby = new Schema({
   },
   players: [String],
   teamList: Array,
+  tournamentGroups: { type: [[String]], default: [] },
+  tournamentTracks: { type: [String], default: [] },
+  tournamentRoundReady: { type: Boolean, default: false },
   closed: {
     type: Boolean,
     default: false,
@@ -540,7 +543,7 @@ Lobby.methods = {
     if (this.isTournament()) {
       maxPlayers = {
         [RACE_ITEMS_FFA]: 64,
-        [RACE_ITEMS_DUOS]: 64,
+        [RACE_ITEMS_DUOS]: 16,
         [RACE_ITEMS_3V3]: 48,
         [RACE_ITEMS_4V4]: 64,
         [RACE_SURVIVAL]: 64,
@@ -947,7 +950,8 @@ Lobby.methods = {
       TRACK_OPTION_POOLS,
     ];
 
-    if (![RACE_ITEMLESS_FFA, BATTLE_1V1, BATTLE_FFA].includes(this.type)) {
+    if (!(this.isTournament() && this.type === RACE_ITEMS_DUOS)
+      && ![RACE_ITEMLESS_FFA, BATTLE_1V1, BATTLE_FFA].includes(this.type)) {
       availableTrackOptions.push(TRACK_OPTION_DRAFT);
     }
 
@@ -1017,7 +1021,7 @@ Lobby.methods = {
   hasTournamentsEnabled() {
     const enabled = {
       [RACE_ITEMS_FFA]: true,
-      [RACE_ITEMS_DUOS]: false,
+      [RACE_ITEMS_DUOS]: true,
       [RACE_ITEMS_3V3]: false,
       [RACE_ITEMS_4V4]: false,
       [RACE_SURVIVAL]: false,

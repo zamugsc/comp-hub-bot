@@ -41,7 +41,7 @@ function getPlayerData(p) {
 const teams = ['A', 'B', 'C', 'D'];
 const colors = ['#189dfe', '#ff0000', '#7fff00', '#fff000'];
 
-async function generateTemplate(players, doc) {
+async function generateTemplate(players, doc, teamList = doc.teamList, playerRatings = null) {
   const playerDocs = [];
   for (const p of players) {
     const player = await Player.findOne({ discordId: p });
@@ -129,7 +129,7 @@ async function generateTemplate(players, doc) {
   const points = `${Array(numberOfMaps).fill(0).join('|')}`;
   if (doc.isTeams()) {
     rows.push(title);
-    doc.teamList.forEach((team, i) => {
+    teamList.forEach((team, i) => {
       if (team.length <= 0) {
         return;
       }
@@ -154,11 +154,14 @@ async function generateTemplate(players, doc) {
 
   const PSNs = [];
   for (const x of playerDocs) {
-    const rank = await Rank.findOne({ name: x.rankedName });
-
     let mmr = doc.getDefaultRank();
-    if (rank && rank[doc.type] && rank[doc.type].rank) {
-      mmr = parseInt(rank[doc.type].rank, 10);
+    if (playerRatings && playerRatings.has(x.discordId)) {
+      mmr = playerRatings.get(x.discordId);
+    } else {
+      const rank = await Rank.findOne({ name: x.rankedName });
+      if (rank && rank[doc.type] && rank[doc.type].rank) {
+        mmr = parseInt(rank[doc.type].rank, 10);
+      }
     }
 
     if (!x.psn) {

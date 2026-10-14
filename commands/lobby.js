@@ -56,6 +56,7 @@ const generateTracks = require('../utils/generateTracks');
 const getConfigValue = require('../utils/getConfigValue');
 const getLorenziBoardData = require('../utils/getLorenziBoardData');
 const greedyPartition = require('../utils/greedyPartition');
+const { validateDuoRoster, validateDuoRound, balanceDuoGroups, getAdvancingDuos, splitTournamentFields } = require('../utils/duoTournament');
 const {
   withRoomLock,
   getRoomChannel,
@@ -250,6 +251,7 @@ async function getAverageRank(doc) {
  * @returns Promise
  */
 async function getEmbed(doc, players, tracks, roomChannel) {
+  const duoTournament = doc.isTournament() && doc.type === RACE_ITEMS_DUOS;
   let playersText = 'No players.';
   let psnAndRanks = 'No players.';
 
@@ -260,7 +262,10 @@ async function getEmbed(doc, players, tracks, roomChannel) {
     const psns = [];
 
     for (const playerId of players) {
-      const [tag, psn, rank, ranked_name] = await getPlayerInfo(playerId, doc);
+      const [playerTag, psn, rank, playerName] = await getPlayerInfo(playerId, doc);
+      const tag = duoTournament ? `<@${playerId}>` : playerTag;
+      const ranked_name = duoTournament && playerName && playerName.length > 64
+        ? `${playerName.slice(0, 61)}...` : playerName;
 
       playersOut.push(tag);
 
@@ -483,7 +488,7 @@ async function getEmbed(doc, players, tracks, roomChannel) {
       image: {
         url: doc.getStartedIcon(),
       },
-      fields,
+      fields: duoTournament ? splitTournamentFields(fields) : fields,
       footer: getFooter(doc),
       timestamp,
     };
@@ -513,7 +518,7 @@ async function getEmbed(doc, players, tracks, roomChannel) {
         name: `Gathering ${doc.getTitle()}`,
         icon_url: iconUrl,
       },
-      fields,
+      fields: duoTournament ? splitTournamentFields(fields) : fields,
       footer: getFooter(doc),
       timestamp,
     };
@@ -939,7 +944,138 @@ async function createPatchworkTeams(doc) {
  * @param roomChannel
  * @returns Promise<void>
  */
+async function setupDuoTournamentRound(doc, roomChannel) {
+  if (!doc.isTournament() || doc.maxPlayerCount !== 16 || ![8, 16].includes(doc.players.length)) {
+    throw new Error('The duo tournament pilot requires 16 starting players and an 8-player final.');
+  }
+  validateDuoRoster(doc.players, doc.teamList, doc.players.length === 16);
+  if (doc.getSoloPlayers().length) {
+    const newTeams = doc.teamCreation === TEAM_CREATION_BALANCED
+      ? await createBalancedTeams(doc) : await createRandomTeams(doc);
+    doc.teamList = [...doc.teamList, ...newTeams];
+  }
+  validateDuoRoster(doc.players, doc.teamList);
+
+  // Group placement uses each pair's mean normal-duos rating, not the highest
+  // rating across other modes used by the existing solo-pairing algorithm.
+  const ratings = new Map();
+  for (const player of doc.players) {
+    const record = await Player.findOne({ discordId: player });
+    const rank = record && await Rank.findOne({ name: record.rankedName });
+    const rating = rank && rank[RACE_ITEMS_DUOS] && rank[RACE_ITEMS_DUOS].rank;
+    ratings.set(player, Number.isFinite(rating) ? rating : doc.getDefaultRank());
+  }
+  if (!doc.tournamentGroups.length) {
+    const settings = new Lobby(doc.toObject());
+    settings.mode = LOBBY_MODE_STANDARD;
+    doc.tournamentGroups = balanceDuoGroups(doc.teamList, ratings);
+    doc.tournamentTracks = await generateTracks(settings);
+  }
+  validateDuoRound(doc);
+  doc.tournamentRoundReady = false;
+  // Save pairs, groups and tracks before posting. A retry/restart must not reroll them.
+  await doc.save();
+
+  const pinnedMessages = await roomChannel.messages.fetchPinned();
+  for (const pinned of pinnedMessages.values()) {
+    if (pinned.author.id === client.user.id) await pinned.unpin();
+  }
+  const final = doc.players.length === 8;
+  const ruleset = rulesets.find((rule) => rule.id === doc.ruleset);
+  for (let i = 0; i < doc.tournamentGroups.length; i += 1) {
+    const group = doc.tournamentGroups[i];
+    const teams = doc.teamList.filter((team) => group.includes(team[0]));
+    const players = teams.flat();
+    const [PSNs, templateUrl, template] = await generateTemplate(players, doc, teams, ratings);
+    const fields = [
+      {
+        name: 'Duos (average rating)',
+        value: teams.map((team, index) => {
+          const rating = (ratings.get(team[0]) + ratings.get(team[1])) / 2;
+          return `**Team ${String.fromCharCode(65 + index)} [${rating}]** ${team.map((id) => `<@${id}>`).join(' & ')}`;
+        }).join('\n'),
+      },
+      { name: 'PSN IDs & Ranks', value: PSNs.join('\n'), inline: true },
+      { name: 'Tracks', value: doc.tournamentTracks.join('\n'), inline: true },
+      { name: 'Settings', value: `Lap Count: ${doc.lapCount}\nRuleset: ${ruleset.name}`, inline: true },
+      {
+        name: 'Advancement',
+        value: final ? 'The highest-scoring duo wins.' : 'The top two duos from each semifinal advance to the final.',
+      },
+    ];
+    const code = `\`\`\`${template}\`\`\``;
+    const link = `[Open template on gb.hlorenzi.com](${templateUrl})`;
+    const files = [];
+    // The template and its encoded URL can exceed one embed field even with 8 players.
+    if (code.length <= 1024) fields.push({ name: 'Score Template', value: code });
+    if (link.length <= 1024) fields.push({ name: 'Score Table', value: link });
+    if (code.length > 1024 || link.length > 1024) {
+      files.push({ attachment: Buffer.from(template, 'utf8'), name: `duos-${final ? 'final' : `semifinal-${i + 1}`}.txt` });
+      fields.push({ name: 'Full Score Template', value: 'Copy the score template from the attached text file.' });
+    }
+    const posted = await roomChannel.send({
+      content: players.map((id) => `<@${id}>`).join(', '),
+      embed: { color: doc.getColor(), title: final ? 'Duos Tournament Final' : `Duos Tournament Semifinal ${i + 1}`, fields: splitTournamentFields(fields) },
+      files,
+    });
+    await posted.pin();
+  }
+  doc.tournamentRoundReady = true;
+  await doc.save();
+}
+
+async function advanceDuoTournament(lobbyId, message) {
+  const mentions = message.mentions.users.map((user) => user.id);
+  return lock.acquire(`tournament:${lobbyId}`, async () => {
+    // Read under the lock so two commands cannot advance the same round twice.
+    const doc = await Lobby.findOne({ _id: lobbyId });
+    if (!doc || !doc.started || !doc.isTournament() || doc.type !== RACE_ITEMS_DUOS) {
+      return message.channel.warn('This is not a started duo tournament.');
+    }
+    if (!message.member.isStaff() && doc.creator !== message.author.id) {
+      return message.channel.warn('You need to be either a staff member or the lobby creator to use this command.');
+    }
+    const room = await Room.findOne({ guild: doc.guild, lobby: doc.id });
+    const channel = room && getRoomChannel(client.guilds.cache.get(doc.guild), room.number);
+    if (!channel) return message.channel.warn('The tournament room could not be found.');
+    if (!doc.tournamentRoundReady) {
+      if (mentions.length) {
+        return message.channel.warn(`The round messages are not ready. Run \`!l advance ${doc.id}\` without mentions to retry posting them first.`);
+      }
+      await setupTournamentRound(doc, channel);
+      return message.channel.success('The saved tournament round is ready. Play this round before selecting its winners.');
+    }
+    let teams;
+    try {
+      teams = getAdvancingDuos(doc, mentions);
+    } catch (error) {
+      return message.channel.warn(error.message);
+    }
+    const final = doc.players.length === 8;
+    const winners = teams.flat().map((id) => `<@${id}>`).join(', ');
+    if (final) {
+      // Keep the final roster valid until cleanup succeeds, so a failed cleanup is retryable.
+      await message.channel.success(`The winners of the tournament are ${winners}!`);
+      return deleteLobby(doc, message);
+    }
+    doc.teamList = teams;
+    doc.players = teams.flat();
+    doc.tournamentGroups = [];
+    doc.tournamentTracks = [];
+    doc.tournamentRoundReady = false;
+    await doc.save();
+    await setupTournamentRound(doc, channel);
+    return message.channel.success(`The final is starting! Advancing duos: ${winners}`);
+  }).catch(async (error) => {
+    console.error('Could not advance duo tournament:', error);
+    await message.channel.error(`Could not update the tournament. If round messages are missing, retry \`!l advance ${lobbyId}\` without mentions. Ask staff to check the lobby if the error continues.`);
+  });
+}
+
 async function setupTournamentRound(doc, roomChannel) {
+  if (doc.type === RACE_ITEMS_DUOS) {
+    return setupDuoTournamentRound(doc, roomChannel);
+  }
   const pinnedMessages = await roomChannel.messages.fetchPinned();
   pinnedMessages.forEach((pinnedMessage) => pinnedMessage.unpin());
 
@@ -1129,13 +1265,13 @@ function startLobby(docId) {
               .addComponent(deleteLobbyButtonCopy);
 
             if (doc.isTournament()) {
-              roomChannel.info(`The ${doc.getTitle()} is starting!`, doc.players).then(async () => {
+              await roomChannel.info(`The ${doc.getTitle()} is starting!`, doc.players);
+              await lock.acquire(`tournament:${doc.id}`, async () => {
+                await setupTournamentRound(doc, roomChannel);
                 await message.edit({
                   embed: await getEmbed(doc, doc.players, tracks, roomChannel),
                   components: [buttonRow],
                 });
-
-                await setupTournamentRound(doc, roomChannel);
               });
             } else {
               // Display track column but blank all tracks
@@ -1331,6 +1467,11 @@ function confirmLobbyStart(doc, message, override = false) {
 
   const playersCount = doc.players.length;
 
+  if (doc.isTournament() && doc.type === RACE_ITEMS_DUOS
+    && (playersCount !== 16 || doc.maxPlayerCount !== 16)) {
+    return message.channel.warn('The duo tournament pilot requires exactly 16 players.');
+  }
+
   if (doc.isDuos() && playersCount % 2 !== 0) {
     return message.channel.warn(`The lobby \`${doc.id}\` has ${playersCount} players.\nYou cannot start Duos lobby with player count not divisible by 2.`);
   }
@@ -1379,7 +1520,7 @@ function findLobby(lobbyID, isStaff, message, callback) {
       });
     }
 
-    promise.then((doc) => {
+    return promise.then((doc) => {
       if (!doc) {
         if (isStaff) {
           return message.channel.warn('There is no lobby with this ID.');
@@ -1391,7 +1532,7 @@ function findLobby(lobbyID, isStaff, message, callback) {
       return callback(doc, message);
     });
   } else {
-    Lobby.find({
+    return Lobby.find({
       $or: [
         { creator: message.author.id },
         { started: true, players: message.author.id },
@@ -1617,7 +1758,9 @@ module.exports = {
               {
                 key: LOBBY_MODE_TOURNAMENT,
                 name: 'Tournament Lobby',
-                description: 'Standard Lobbies can have up to 64 players.',
+                description: selectedType === RACE_ITEMS_DUOS
+                  ? 'Duo tournaments have exactly 16 players (8 duos).'
+                  : 'Tournament Lobbies can have up to 64 players.',
                 default: false,
               },
             ];
@@ -2122,9 +2265,17 @@ module.exports = {
         break;
       case 'advance':
         // eslint-disable-next-line consistent-return
-        findLobby(lobbyID, message.member.isStaff(), message, (doc) => {
+        return findLobby(lobbyID && /^<@!?\d+>$/.test(lobbyID) ? null : lobbyID, message.member.isStaff(), message, (doc) => {
           if (!doc) {
             return message.channel.warn('You are not in a tournament lobby.');
+          }
+
+          if (doc.type === RACE_ITEMS_DUOS) {
+            return advanceDuoTournament(doc.id, message);
+          }
+
+          if (!doc.started || !doc.isTournament()) {
+            return message.channel.warn('You can only advance a started tournament.');
           }
 
           if (!message.member.isStaff() && doc.creator !== message.author.id) {
@@ -2159,7 +2310,6 @@ module.exports = {
             message.channel.error('Something went wrong when advancing players.');
           });
         });
-        break;
       case 'update_ranks':
         if (!message.member.isStaff()) {
           return message.channel.warn('You need to be a staff member to use this command.');
@@ -2581,6 +2731,11 @@ async function mogi(reaction, user, removed = false) {
         return lock.acquire(doc._id, async () => Lobby.findOne({ _id: doc._id }).then(async (doc) => {
           let players = Array.from(doc.players);
           const playersCount = players.length;
+
+          if (doc.mode === 'tournament' && doc.type === RACE_ITEMS_DUOS
+            && (doc.started || doc.closed || (!removed && playersCount >= 16))) {
+            return;
+          }
 
           // eslint-disable-next-line max-len
           if (!removed && playersCount > doc.maxPlayerCount) {
