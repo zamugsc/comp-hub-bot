@@ -46,24 +46,24 @@ Player.methods = {
     let icon;
 
     if (!this.nat) {
-      icon = client.getEmote('diamondYellow', '872049069336440842');
+      icon = client.getEmote('NAT_2_CLOSED', '1559797998941118555');
     } else {
       const natType = natTypes.find((n) => n.name === this.nat);
       switch (natType.key) {
         case 'nat1':
-          icon = client.getEmote('diamondGreen', '872048667165614120');
+          icon = client.getEmote('NAT_1', '1559797995602452520');
           break;
         case 'nat2o':
-          icon = client.getEmote('diamondBlue', '872049054828347422');
+          icon = client.getEmote('NAT_2_OPEN', '1559797994256076822');
           break;
         case 'nat2c':
-          icon = client.getEmote('diamondYellow', '872049069336440842');
+          icon = client.getEmote('NAT_2_CLOSED', '1559797998941118555');
           break;
         case 'nat3':
-          icon = client.getEmote('diamondRed', '872049080233250837');
+          icon = client.getEmote('NAT_3', '1559797997221584906');
           break;
         default:
-          icon = client.getEmote('diamondYellow', '872049069336440842');
+          icon = client.getEmote('NAT_2_CLOSED', '1559797998941118555');
           break;
       }
     }
@@ -82,11 +82,11 @@ Player.methods = {
       const cons = Object.values(this.consoles).includes('PS5');
       if(cons)
       {
-        icon = client.getEmote('PS5', '1007511706588696686');
+        icon = client.getEmote('PS5', '1559798002133237921');
       }
       else
       {
-        icon = client.getEmote('PS4', '1007511742294786089');
+        icon = client.getEmote('PS4', '1559798000430227456');
       }
     }
 
