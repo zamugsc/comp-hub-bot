@@ -369,7 +369,7 @@ async function getEmbed(doc, players, tracks, roomChannel) {
   if (!doc.anonymous || doc.started) {
     creatorField = {
       name: ':bust_in_silhouette: Creator',
-      value: `${creator.flag} <@${doc.creator}>`,
+      value: `${creator && creator.flag ? creator.flag : ':united_nations:'} <@${doc.creator}>`,
       inline: true,
     };
   } else {
