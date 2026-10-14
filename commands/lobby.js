@@ -959,16 +959,16 @@ async function setupTournamentRound(doc, roomChannel) {
   }
 
   /* Create tracks based on the underlying format */
-  const lobby = doc;
+  const lobby = new Lobby(doc.toObject());
   lobby.mode = LOBBY_MODE_STANDARD;
 
   const tracks = await generateTracks(lobby);
-  const lobbyCount = doc.players.length / doc.getDefaultPlayerCount();
+  const lobbyCount = doc.players.length / lobby.getDefaultPlayerCount();
 
   if (doc.isSolos()) {
     /* Attempt MMR balancing */
     const playerRanks = await getPlayerRanks(doc);
-    const distributedPlayers = greedyPartition(playerRanks, lobbyCount, doc.getDefaultPlayerCount(), 'rank');
+    const distributedPlayers = greedyPartition(playerRanks, lobbyCount, lobby.getDefaultPlayerCount(), 'rank');
 
     const lobbyData = [];
 
@@ -2132,7 +2132,7 @@ module.exports = {
           }
 
           const users = message.mentions.users.map((u) => u.id);
-          const lobby = doc;
+          const lobby = new Lobby(doc.toObject());
           lobby.mode = LOBBY_MODE_STANDARD;
 
           let advanceCount;
