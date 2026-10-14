@@ -1,4 +1,5 @@
 const { Room } = require('../db/models/room');
+const { withRoomLock, releaseRoom } = require('../utils/lobbyRoomPermissions');
 
 module.exports = {
   name: 'rooms',
@@ -7,10 +8,10 @@ module.exports = {
   aliases: ['room'],
   permissions: ['MANAGE_CHANNELS', 'MANAGE_ROLES'],
   // eslint-disable-next-line consistent-return
-  execute(message, args) {
+  async execute(message, args) {
     if (!args.length) {
       // eslint-disable-next-line consistent-return
-      Room.find({ guild: message.guild.id }).sort({ number: 1 }).then((docs) => {
+      return Room.find({ guild: message.guild.id }).sort({ number: 1 }).then((docs) => {
         if (!docs.length) {
           return message.channel.info('There are no rooms.');
         }
@@ -47,30 +48,43 @@ module.exports = {
 
       if (action === 'free') {
         const number = args.shift();
-        if (number === 'all') {
-          Room.find({ guild: message.guild.id }).then((docs) => {
-            const promises = docs.map((doc) => {
-              doc.lobby = null;
-              return doc.save();
-            });
-
-            Promise.all(promises).then(() => {
-              message.channel.success('All rooms were freed.');
-            });
-          });
-        } else {
-          // eslint-disable-next-line consistent-return
-          Room.findOne({ guild: message.guild.id, number }).then((doc) => {
-            if (!doc) {
-              return message.channel.warn('There is no room with this number.');
+        return withRoomLock(message.guild.id, async () => {
+          if (number === 'all') {
+            const docs = await Room.find({ guild: message.guild.id });
+            const failed = [];
+            for (const doc of docs) {
+              try {
+                await releaseRoom(message.guild, doc);
+              } catch (error) {
+                failed.push(doc.number);
+                // eslint-disable-next-line no-console
+                console.error(`Could not free room ${doc.number}:`, error);
+              }
             }
-
-            doc.lobby = null;
-            doc.save().then(() => {
-              message.channel.success('Room was freed.');
-            });
-          });
-        }
+            if (failed.length) {
+              return { failed, freed: docs.length - failed.length };
+            }
+            return { failed, freed: docs.length };
+          } else {
+            const doc = await Room.findOne({ guild: message.guild.id, number });
+            if (!doc) {
+              return null;
+            }
+            await releaseRoom(message.guild, doc);
+            return { failed: [], freed: 1 };
+          }
+        }).then((result) => {
+          if (!result) return message.channel.warn('There is no room with this number.');
+          if (result.failed.length) {
+            return message.channel.error(`Freed ${result.freed} rooms. Could not free rooms: ${result.failed.join(', ')}. Check bot permissions and retry.`);
+          }
+          return message.channel.success(number === 'all' ? 'All rooms were freed.' : 'Room was freed.');
+        }).catch(async (error) => {
+          // eslint-disable-next-line no-console
+          console.error('Could not free room:', error);
+          // eslint-disable-next-line no-console
+          await message.channel.error('Could not free the room. Check bot permissions and retry.').catch(console.error);
+        });
       }
     }
   },

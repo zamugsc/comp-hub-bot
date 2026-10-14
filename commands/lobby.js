@@ -56,6 +56,12 @@ const generateTracks = require('../utils/generateTracks');
 const getConfigValue = require('../utils/getConfigValue');
 const getLorenziBoardData = require('../utils/getLorenziBoardData');
 const greedyPartition = require('../utils/greedyPartition');
+const {
+  withRoomLock,
+  getRoomChannel,
+  clearRoomMemberPermissions,
+  releaseRoom,
+} = require('../utils/lobbyRoomPermissions');
 
 const {
   optimalPartition3,
@@ -538,7 +544,12 @@ async function getEmbed(doc, players, tracks, roomChannel) {
  * @returns {*}
  */
 function findRoom(lobby) {
-  return Room.findOne({ lobby: null, guild: lobby.guild }).sort({ number: 1 }).then((doc) => {
+  return withRoomLock(lobby.guild, async () => {
+    // Ending a lobby can overtake its asynchronous startup.
+    if (!await Lobby.findOne({ _id: lobby.id, started: true })) return null;
+    const assigned = await Room.findOne({ lobby: lobby.id, guild: lobby.guild });
+    if (assigned) return assigned;
+    const doc = await Room.findOne({ lobby: null, guild: lobby.guild }).sort({ number: 1 });
     if (!doc) {
       return Sequence.findOneAndUpdate(
         { guild: lobby.guild, name: 'rooms' },
@@ -565,31 +576,35 @@ function findRoom(lobby) {
  * @returns {Promise<GuildChannel>}
  */
 async function findRoomChannel(doc, roomNumber) {
-  const guild = client.guilds.cache.get(doc.guild);
-  const channelName = getRoomName(roomNumber);
-  let category = guild.channels.cache.find((c) => c.name.toLowerCase() === config.channels.matchmaking_category.toLowerCase() && c.type === 'category');
-  if (!category) {
-    category = await guild.channels.create(config.channels.matchmaking_category, { type: 'category' });
-  }
+  return withRoomLock(doc.guild, async () => {
+    const room = await Room.findOne({ guild: doc.guild, number: roomNumber, lobby: doc.id });
+    if (!room) return null;
+    const guild = client.guilds.cache.get(doc.guild);
+    const channelName = getRoomName(roomNumber);
+    let category = guild.channels.cache.find((c) => c.name.toLowerCase() === config.channels.matchmaking_category.toLowerCase() && c.type === 'category');
+    if (!category) {
+      category = await guild.channels.create(config.channels.matchmaking_category, { type: 'category' });
+    }
 
-  let channel = guild.channels.cache.find((c) => c.name === channelName);
-  if (!channel) {
-    const roleStaff = await guild.roles.findByName(config.roles.staff_role);
-    const roleVerified = await guild.roles.findByName(config.roles.verified_player_role);
-    const roleMatchmaking = await guild.roles.findByName(config.roles.matchmaking_role);
+    let channel = getRoomChannel(guild, roomNumber);
+    if (!channel) {
+      const roleStaff = await guild.roles.findByName(config.roles.staff_role);
+      const roleVerified = await guild.roles.findByName(config.roles.verified_player_role);
+      const roleMatchmaking = await guild.roles.findByName(config.roles.matchmaking_role);
 
-    channel = await guild.channels.create(channelName, {
-      type: 'text',
-      parent: category,
-    });
+      channel = await guild.channels.create(channelName, {
+        type: 'text',
+        parent: category,
+      });
 
-    await channel.createOverwrite(roleStaff, { VIEW_CHANNEL: true, SEND_MESSAGES: true });
-    await channel.createOverwrite(roleVerified, { VIEW_CHANNEL: true, SEND_MESSAGES: false });
-    await channel.createOverwrite(roleMatchmaking, { VIEW_CHANNEL: true, SEND_MESSAGES: false });
-    await channel.createOverwrite(guild.roles.everyone, { VIEW_CHANNEL: false, SEND_MESSAGES: false });
-  }
+      await channel.createOverwrite(roleStaff, { VIEW_CHANNEL: true, SEND_MESSAGES: true });
+      await channel.createOverwrite(roleVerified, { VIEW_CHANNEL: true, SEND_MESSAGES: false });
+      await channel.createOverwrite(roleMatchmaking, { VIEW_CHANNEL: true, SEND_MESSAGES: false });
+      await channel.createOverwrite(guild.roles.everyone, { VIEW_CHANNEL: false, SEND_MESSAGES: false });
+    }
 
-  return channel;
+    return channel;
+  });
 }
 
 /**
@@ -1009,36 +1024,49 @@ async function setupTournamentRound(doc, roomChannel) {
 }
 
 /**
- * Makes a lobby room private
+ * Clears previous access and grants the current lobby access, if it still owns the room.
  * @param doc
  * @param roomChannel
- * @returns {Promise<void>}
- */
-async function makeLobbyRoomPrivate(doc, roomChannel) {
-  const guild = client.guilds.cache.get(doc.guild);
-
-  for (const p of doc.players) {
-    const overwrite = roomChannel.permissionOverwrites.get(p);
-
-    if (overwrite) {
-      await overwrite.delete();
-    }
-  }
-}
-
-/**
- * Makes a lobby room public
- * @param doc
- * @param roomChannel
- * @returns {Promise<void>}
+ * @returns {Promise<boolean>}
  */
 async function makeLobbyRoomPublic(doc, roomChannel) {
   const guild = client.guilds.cache.get(doc.guild);
+  return withRoomLock(doc.guild, async () => {
+    const room = await Room.findOne({ lobby: doc.id, guild: doc.guild });
+    const assignedChannel = room && getRoomChannel(guild, room.number);
+    if (!assignedChannel || assignedChannel.id !== roomChannel.id) return false;
+    if (!await Lobby.findOne({ _id: doc.id, started: true })) return false;
 
-  for (const p of doc.players) {
-    const member = await guild.members.fetch(p);
-    await roomChannel.createOverwrite(member, { VIEW_CHANNEL: true, SEND_MESSAGES: true });
-  }
+    const channel = await clearRoomMemberPermissions(roomChannel);
+    for (const p of doc.players) {
+      const member = await guild.members.fetch(p);
+      await channel.createOverwrite(member, { VIEW_CHANNEL: true, SEND_MESSAGES: true });
+    }
+    return true;
+  });
+}
+
+function allowLobbyChat(doc, player, message) {
+  const guild = client.guilds.cache.get(doc.guild);
+  return withRoomLock(doc.guild, async () => {
+    const activeLobby = await Lobby.findOne({ _id: doc.id, started: true });
+    const room = await Room.findOne({ lobby: doc.id, guild: doc.guild });
+    if (!activeLobby || !room) return message.channel.warn('This lobby no longer has an active room.');
+    const cachedChannel = getRoomChannel(guild, room.number);
+    if (!cachedChannel) return message.channel.warn('Could not find room channel.');
+    const channel = await cachedChannel.fetch(true);
+    if (channel.permissionOverwrites.has(player.id)) {
+      return message.channel.warn(`You have already given chat permissions to <@!${player.id}>.`);
+    }
+    const member = await guild.members.fetch(player.id);
+    await channel.createOverwrite(member, { SEND_MESSAGES: true });
+    return message.channel.success(`You have given chat permissions to <@!${player.id}>.`);
+  }).catch(async (error) => {
+    // eslint-disable-next-line no-console
+    console.error('Could not grant lobby chat access:', error);
+    // eslint-disable-next-line no-console
+    await message.channel.error('Could not grant chat permissions. Please ask staff to check the room permissions.').catch(console.error);
+  });
 }
 
 /**
@@ -1047,15 +1075,19 @@ async function makeLobbyRoomPublic(doc, roomChannel) {
  */
 function startLobby(docId) {
   // eslint-disable-next-line max-len
-  Lobby.findOneAndUpdate({ _id: docId, started: false }, {
+  return Lobby.findOneAndUpdate({ _id: docId, started: false }, {
     started: true,
     startedAt: new Date(),
   }, { new: true }).then((doc) => {
-    // eslint-disable-next-line max-len
-    client.guilds.cache.get(doc.guild).channels.cache.get(doc.channel).messages.fetch(doc.message).then((message) => {
-      generateTracks(doc).then((tracks) => {
-        findRoom(doc).then((room) => {
-          findRoomChannel(doc, room.number).then(async (roomChannel) => {
+    if (!doc) return null;
+    // eslint-disable-next-line max-len, arrow-body-style
+    return client.guilds.cache.get(doc.guild).channels.cache.get(doc.channel).messages.fetch(doc.message).then((message) => {
+      // eslint-disable-next-line arrow-body-style
+      return generateTracks(doc).then((tracks) => {
+        return findRoom(doc).then((room) => {
+          if (!room) return null;
+          return findRoomChannel(doc, room.number).then(async (roomChannel) => {
+            if (!roomChannel) return;
             // remove all players from their other lobbies
             for (const playerId of doc.players) {
               const playerLobbies = await Lobby.find({
@@ -1078,7 +1110,7 @@ function startLobby(docId) {
               }
             }
 
-            await makeLobbyRoomPublic(doc, roomChannel);
+            if (!await makeLobbyRoomPublic(doc, roomChannel)) return;
 
             const joinLobbyButtonCopy = JSON.parse(JSON.stringify(joinLobbyButton));
             const leaveLobbyButtonCopy = JSON.parse(JSON.stringify(leaveLobbyButton));
@@ -1264,6 +1296,14 @@ ${playersText}`,
           });
         });
       });
+    }).catch(async (error) => {
+      // Keep the room reserved on failure; ending/resetting it must clean permissions first.
+      // eslint-disable-next-line no-console
+      console.error(`Could not start lobby ${doc.id}:`, error);
+      const channel = client.guilds.cache.get(doc.guild).channels.cache.get(doc.channel);
+      if (channel) {
+        await channel.error(`Could not start lobby \`${doc.id}\`. Its room remains reserved if assigned. Staff should check bot permissions, then end the lobby or reset its room before retrying.`);
+      }
     });
     // eslint-disable-next-line no-console
   }).catch(console.error);
@@ -1394,52 +1434,23 @@ function findLobby(lobbyID, isStaff, message, callback) {
   }
 }
 
-function deleteLobby(doc, message, sendMessage) {
-  if (arguments.length < 3) {
-    sendMessage = true;
-  }
-
+function deleteLobby(doc, message, sendMessage = true, messageDeleted = false) {
   const guild = client.guilds.cache.get(doc.guild);
-  let lobbiesChannel;
+  return withRoomLock(doc.guild, async () => {
+    // Both !l end and messageDelete can arrive for the same lobby. Re-read under
+    // the shared lock so an old cleanup can never touch a reassigned room.
+    doc = await Lobby.findOne({ _id: doc.id });
+    if (!doc) return false;
+    const room = await Room.findOne({ lobby: doc.id, guild: doc.guild });
+    const channel = room ? await releaseRoom(guild, room) : null;
 
-  /// check to allow both unranked and ranked to be deleted
-  if (doc.ranked) {
-    // eslint-disable-next-line max-len
-    lobbiesChannel = guild.channels.cache.find((c) => c.name.toLowerCase() === config.channels.ranked_lobbies_channel.toLowerCase());
-  } else {
-    // eslint-disable-next-line max-len
-    lobbiesChannel = guild.channels.cache.find((c) => c.name.toLowerCase() === config.channels.unranked_lobbies_channel.toLowerCase());
-  }
-  const promiseMessageDelete = lobbiesChannel.messages.fetch(doc.message).then((m) => m.delete());
-
-  let endMessage = 'Lobby ended.';
-  if (doc.started && doc.ranked) {
-    endMessage += ' Don\'t forget to submit your scores.';
-  }
-
-  const roomDocDelete = Room.findOne({ lobby: doc.id }).then(async (room) => {
-    if (!room) {
-      return;
+    let endMessage = 'Lobby ended.';
+    if (doc.started && doc.ranked) {
+      endMessage += ' Don\'t forget to submit your scores.';
     }
 
-    // eslint-disable-next-line max-len
-    const channel = guild.channels.cache.find((c) => c.name.toLowerCase() === getRoomName(room.number).toLowerCase());
-    if (channel) {
-      await makeLobbyRoomPrivate(doc, channel);
-    }
-
-    if (message && channel && message.channel.id !== channel.id) {
-      channel.success(endMessage);
-    }
-
-    room.lobby = null;
-    room.save();
-  });
-
-  const promises = [promiseMessageDelete, roomDocDelete];
-
-  if (doc.started) {
-    const saveFinishedLobbyPromise = getAverageRank(doc).then((averageRank) => {
+    if (doc.started && !messageDeleted) {
+      const averageRank = await getAverageRank(doc);
       const finishedLobby = new FinishedLobby();
       finishedLobby.type = doc.type;
       finishedLobby.trackOption = doc.trackOption;
@@ -1452,20 +1463,40 @@ function deleteLobby(doc, message, sendMessage) {
       finishedLobby.ranked = doc.ranked;
       finishedLobby.averageRank = averageRank;
       finishedLobby.number = doc.number;
-
-      return finishedLobby.save();
-    });
-
-    promises.push(saveFinishedLobbyPromise);
-  }
-
-  promises.push(doc.delete());
-
-  // eslint-disable-next-line max-len
-  Promise.all(promises).then(() => {
-    if (message && sendMessage) {
-      message.channel.success(endMessage);
+      await finishedLobby.save();
     }
+
+    // Remove the record before the Discord message, so our own messageDelete
+    // event does not initiate a second cleanup or archive the lobby twice.
+    await doc.delete();
+    if (!messageDeleted) {
+      const lobbiesChannel = guild.channels.cache.get(doc.channel);
+      if (lobbiesChannel) {
+        try {
+          const lobbyMessage = await lobbiesChannel.messages.fetch(doc.message);
+          await lobbyMessage.delete();
+        } catch (error) {
+          if (error.code !== 10008) throw error; // Already-deleted message is harmless.
+        }
+      }
+    }
+
+    if (channel && (!message || !message.channel || message.channel.id !== channel.id)) {
+      await channel.success(endMessage);
+    }
+    if (message && sendMessage) {
+      await message.channel.success(endMessage);
+    }
+    return true;
+  }).catch(async (error) => {
+    // eslint-disable-next-line no-console
+    console.error('Could not end lobby:', error);
+    const channel = (message && message.channel) || (guild && guild.channels.cache.get(doc.channel));
+    if (channel) {
+      // eslint-disable-next-line no-console
+      await channel.error('Could not finish ending the lobby. A room whose permission cleanup failed remains reserved. Staff should check bot permissions and retry.').catch(console.error);
+    }
+    return false;
   });
 }
 
@@ -2002,24 +2033,7 @@ module.exports = {
             return message.channel.warn('You need to mention a player.');
           }
 
-          Room.findOne({ lobby: doc.id }).then((room) => {
-            if (!room) {
-              return message.channel.warn('Could not find room.');
-            }
-
-            // eslint-disable-next-line max-len
-            const roomChannel = client.guilds.cache.get(room.guild).channels.cache.find((c) => c.name.toLowerCase() === getRoomName(room.number).toLowerCase());
-            const overwrite = roomChannel.permissionOverwrites.get(player.id);
-            if (overwrite) {
-              return message.channel.warn(`You have already given chat permissions to <@!${player.id}>.`);
-            }
-
-            guild.members.fetch(player.id).then((member) => {
-              roomChannel.createOverwrite(member, { SEND_MESSAGES: true }).then(() => {
-                return message.channel.success(`You have given chat permissions to <@!${player.id}>.`);
-              });
-            });
-          });
+          return allowLobbyChat(doc, player, message);
         });
         break;
       case 'end':
@@ -2969,34 +2983,13 @@ client.on('messageReactionRemove', async (reaction, user) => {
 
 client.on('messageDelete', async (message) => {
   // Deleted messages cannot be fetched; partials already contain the IDs needed below.
-  const conditions = { message: message.id };
-
-  Lobby.findOne(conditions).then(async (doc) => {
-    if (doc) {
-      Room.findOne({ lobby: doc.id }).then((room) => {
-        if (!room) {
-          return;
-        }
-
-        // eslint-disable-next-line max-len
-        const channel = client.guilds.cache.get(room.guild).channels.cache.find((c) => c.name.toLowerCase() === getRoomName(room.number).toLowerCase());
-        if (channel && message.channel.id !== channel.id) {
-          if (doc.ranked) {
-            channel.success('Lobby ended. Don\'t forget to submit your scores.');
-          } else {
-            channel.success('Lobby ended.');
-          }
-
-          makeLobbyRoomPrivate(doc, channel).then();
-        }
-
-        room.lobby = null;
-        room.save();
-      });
-
-      doc.delete();
-    }
-  });
+  try {
+    const doc = await Lobby.findOne({ message: message.id });
+    if (doc) await deleteLobby(doc, message, false, true);
+  } catch (error) {
+    // eslint-disable-next-line no-console
+    console.error('Could not clean up a deleted lobby message:', error);
+  }
 });
 
 const findRoomAndSendMessage = (doc, ping = false) => {
