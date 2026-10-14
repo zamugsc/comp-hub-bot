@@ -2283,7 +2283,7 @@ async function restrictSoloQueue(doc, user, soloQueue) {
     if (player && player.rankedName) {
       const playerRank = await Rank.findOne({ name: player.rankedName });
 
-      if (playerRank && playerRank[doc.type]) {
+      if (playerRank && playerRank[doc.type] && Number.isFinite(playerRank[doc.type].rank)) {
         // eslint-disable-next-line prefer-destructuring
         rank = playerRank[doc.type].rank;
       }
@@ -2537,7 +2537,7 @@ async function mogi(reaction, user, removed = false) {
             const playerRank = await Rank.findOne({ name: player.rankedName });
 
             let rank = doc.getDefaultRank();
-            if (playerRank && playerRank[doc.type]) {
+            if (playerRank && playerRank[doc.type] && Number.isFinite(playerRank[doc.type].rank)) {
               // eslint-disable-next-line prefer-destructuring
               rank = playerRank[doc.type].rank;
             }
@@ -2665,11 +2665,11 @@ async function mogi(reaction, user, removed = false) {
                     const playerRank = await Rank.findOne({ name: player.rankedName });
                     const partnerRank = await Rank.findOne({ name: partner.rankedName });
 
-                    if (playerRank && playerRank[doc.type]) {
+                    if (playerRank && playerRank[doc.type] && Number.isFinite(playerRank[doc.type].rank)) {
                       player1Rank = playerRank[doc.type].rank;
                     }
 
-                    if (partnerRank && partnerRank[doc.type]) {
+                    if (partnerRank && partnerRank[doc.type] && Number.isFinite(partnerRank[doc.type].rank)) {
                       player2Rank = partnerRank[doc.type].rank;
                     }
                   }
@@ -2836,7 +2836,7 @@ async function mogi(reaction, user, removed = false) {
                     const teammateRank = await Rank.findOne({ name: teammate.rankedName });
 
                     let rank = doc.getDefaultRank();
-                    if (teammateRank && teammateRank[doc.type]) {
+                    if (teammateRank && teammateRank[doc.type] && Number.isFinite(teammateRank[doc.type].rank)) {
                       // eslint-disable-next-line prefer-destructuring
                       rank = teammateRank[doc.type].rank;
                     }
