@@ -992,7 +992,7 @@ async function setupDuoTournamentRound(doc, roomChannel) {
         name: 'Duos (average rating)',
         value: teams.map((team, index) => {
           const rating = (ratings.get(team[0]) + ratings.get(team[1])) / 2;
-          return `**Team ${String.fromCharCode(65 + index)} [${rating}]** ${team.map((id) => `<@${id}>`).join(' & ')}`;
+          return `**Team ${String.fromCharCode(65 + index)} [${Math.round(rating)}]** ${team.map((id) => `<@${id}>`).join(' & ')}`;
         }).join('\n'),
       },
       { name: 'PSN IDs & Ranks', value: PSNs.join('\n'), inline: true },

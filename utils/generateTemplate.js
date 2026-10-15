@@ -156,7 +156,7 @@ async function generateTemplate(players, doc, teamList = doc.teamList, playerRat
   for (const x of playerDocs) {
     let mmr = doc.getDefaultRank();
     if (playerRatings && playerRatings.has(x.discordId)) {
-      mmr = playerRatings.get(x.discordId);
+      mmr = Math.round(playerRatings.get(x.discordId));
     } else {
       const rank = await Rank.findOne({ name: x.rankedName });
       if (rank && rank[doc.type] && rank[doc.type].rank) {
