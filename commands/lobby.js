@@ -64,6 +64,7 @@ const {
   releaseRoom,
   resumeRoomCleanups,
 } = require('../utils/lobbyRoomPermissions');
+const { saveTournamentAdvancement, resumeTournamentCleanups } = require('../utils/tournamentRoomPermissions');
 
 const {
   optimalPartition3,
@@ -1058,12 +1059,13 @@ async function advanceDuoTournament(lobbyId, message) {
       await message.channel.success(`The winners of the tournament are ${winners}!`);
       return deleteLobby(doc, message);
     }
+    const previousPlayers = [...doc.players];
     doc.teamList = teams;
     doc.players = teams.flat();
     doc.tournamentGroups = [];
     doc.tournamentTracks = [];
     doc.tournamentRoundReady = false;
-    await doc.save();
+    await saveTournamentAdvancement(client.guilds.cache.get(doc.guild), doc, previousPlayers);
     await setupTournamentRound(doc, channel);
     return message.channel.success(`The final is starting! Advancing duos: ${winners}`);
   }).catch(async (error) => {
@@ -2293,18 +2295,21 @@ module.exports = {
             advanceCount = doc.players.length / 2;
           }
 
-          if (users.length !== advanceCount) {
+          if (new Set(users).size !== advanceCount || users.some((id) => !doc.players.includes(id))) {
             return message.channel.warn(`You need to mention ${advanceCount} players.`);
           }
 
+          const previousPlayers = [...doc.players];
           doc.players = doc.players.filter((p) => users.includes(p));
-          doc.save().then(() => {
+          const save = advanceCount === doc.getTeamSize() ? doc.save()
+            : saveTournamentAdvancement(client.guilds.cache.get(doc.guild), doc, previousPlayers);
+          return save.then(async () => {
             if (advanceCount === doc.getTeamSize()) {
               message.channel.success(`The winner of the tournament is <@${doc.players.join(',')}>!`);
-              deleteLobby(doc, message);
+              await deleteLobby(doc, message);
             } else {
               message.channel.success('The next round is starting!');
-              setupTournamentRound(doc, message.channel);
+              await setupTournamentRound(doc, message.channel);
             }
           }).catch(() => {
             message.channel.error('Something went wrong when advancing players.');
@@ -3144,8 +3149,12 @@ client.on('messageReactionRemove', async (reaction, user) => {
 });
 
 // Recover pending deadlines after restart, and retry recovery if its database read failed.
-client.on('ready', () => resumeRoomCleanups(client).catch(console.error));
-new CronJob('* * * * *', () => resumeRoomCleanups(client).catch(console.error)).start();
+function resumePermissionCleanups() {
+  resumeRoomCleanups(client).catch(console.error);
+  resumeTournamentCleanups(client).catch(console.error);
+}
+client.on('ready', resumePermissionCleanups);
+new CronJob('* * * * *', resumePermissionCleanups).start();
 
 client.on('messageDelete', async (message) => {
   // Deleted messages cannot be fetched; partials already contain the IDs needed below.

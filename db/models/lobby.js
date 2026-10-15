@@ -195,6 +195,7 @@ const Lobby = new Schema({
   tournamentGroups: { type: [[String]], default: [] },
   tournamentTracks: { type: [String], default: [] },
   tournamentRoundReady: { type: Boolean, default: false },
+  tournamentPermissionRemovals: [{ playerId: String, removeAt: Date, roomNumber: Number }],
   closed: {
     type: Boolean,
     default: false,
