@@ -49,8 +49,17 @@ At a position shared by multiple players, press **Tie**, select all players shar
 that place, then press **Tie done**. Normal positions still advance after one tap.
 The player buttons stay in the same rows and each player can appear only once.
 **Save scores** remains disabled until all players are selected and any active tie
-is confirmed. Two through all players can share a position, including an eight-way
-battle tie at first place. The review displays the same place number beside every
+is confirmed. FFA allows two through all players to share a position. In team modes,
+each tie group can contain at most one player from each team. Selecting a player
+disables their teammates while the tie is being entered; selecting another team's
+player also disables that player's teammates. The handler rejects teammate picks
+even if a stale or forged button request bypasses the disabled control. Undo and
+Reset restore eligibility, and confirming the tie re-enables unselected players
+for the next position. Tie is disabled when all remaining players share a team.
+Team membership comes from the lobby's saved team list, including on restart;
+missing or invalid team assignments disable tie entry until corrected. Existing
+unfinished same-team ties must be corrected with Undo or Reset before saving.
+The review displays the same place number beside every
 member of a tie, and the visible panel retains an unfinished tie across restarts.
 
 Every tied player receives the full points for their shared position. Racing,

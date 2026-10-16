@@ -26,6 +26,36 @@ function createLobbyScoring({
   const eligible = (doc) => doc.mode !== 'tournament' && doc.type !== 'race_survival'
     && !externalDraft(doc) && Boolean(pointsFor(doc.type)) && doc.players.length === pointsFor(doc.type).length;
 
+  function teamAssignments(doc) {
+    const teams = new Map();
+    if (!/_(?:duos|3v3|4v4)$/.test(doc.type)) return teams;
+    if (!Array.isArray(doc.teamList)) return null;
+    const roster = new Set(doc.scoringRoster.map((player) => player.discordId));
+    for (const [index, members] of doc.teamList.entries()) {
+      if (!Array.isArray(members)) return null;
+      for (const member of members) {
+        const id = String(member);
+        if (!roster.has(id) || teams.has(id)) return null;
+        teams.set(id, index);
+      }
+    }
+    return teams.size === roster.size ? teams : null;
+  }
+
+  const sameTeam = (teams, id, group) => teams.has(id) && group.some((other) => teams.get(other) === teams.get(id));
+  const invalidTie = (teams, group) => group.length > 1
+    && (teams === null || group.some((id, i) => sameTeam(teams, id, group.slice(0, i))));
+  const canStartTie = (teams, remaining) => teams !== null && remaining.length >= 2
+    && remaining.some((id) => !sameTeam(teams, id, [remaining[0]]));
+
+  function validateTieTeams(teams, groups) {
+    if (!groups.some((group) => group.length > 1)) return;
+    if (teams === null) throw new Error('Team assignments are missing or invalid. Tie entry is unavailable.');
+    if (groups.some((group) => invalidTie(teams, group))) {
+      throw new Error('Players on the same team cannot share a tie. Use Undo last or Reset to correct the entry.');
+    }
+  }
+
   async function update(doc, values) {
     // Do not save a stale whole lobby document over room, roster or draft updates.
     const saved = await Lobby.findOneAndUpdate({ _id: doc._id, started: true }, { $set: values }, { new: true });
@@ -89,23 +119,30 @@ function createLobbyScoring({
   function panelPayload(doc, state) {
     const count = doc.scoringRoster.length;
     const order = state.groups.flat();
+    const teams = teamAssignments(doc);
+    const pending = state.tie ? state.groups[state.groups.length - 1] : [];
+    const remaining = doc.scoringRoster.map((player) => player.discordId).filter((id) => !order.includes(id));
+    const invalid = state.groups.some((group) => invalidTie(teams, group));
     const ranked = rankGroups(state.groups, isBattle(doc));
     let next = isBattle(doc) ? state.groups.length + 1 : order.length + 1;
     if (state.tie) next = ranked[ranked.length - 1].place;
     let prompt = 'Double-check the finishing order, then press **Save scores**.';
     if (state.tie) prompt = `Select players tied for ${ordinal(next)} place.\nPress **Tie done** after selecting at least two players.`;
     else if (order.length < count) prompt = next === 8 ? 'Select 8th place 🐢' : `Select ${ordinal(next)} place player`;
+    if (invalid) prompt += '\nTeammates cannot share a tie. Use **Undo last** or **Reset** to correct the entry.';
+    else if (teams === null) prompt += '\nTeam assignments are unavailable. Ties are disabled.';
     const components = [];
     for (let i = 0; i < count; i += 2) {
       components.push(row(...doc.scoringRoster.slice(i, i + 2).map((player) => button(
-        control(doc, 'pick', player.discordId), player.name.slice(0, 80), order.includes(player.discordId),
+        control(doc, 'pick', player.discordId), player.name.slice(0, 80), order.includes(player.discordId)
+          || (state.tie && (teams === null || sameTeam(teams, player.discordId, pending))),
       ))));
     }
     components.push(row(button(control(doc, 'undo'), 'Undo last', !order.length && !state.tie),
       button(control(doc, 'reset'), 'Reset', !order.length && !state.tie),
-      state.tie ? button(control(doc, 'done'), 'Tie done', state.groups[state.groups.length - 1].length < 2)
-        : button(control(doc, 'tie'), 'Tie', count - order.length < 2),
-      button(control(doc, 'save'), 'Save scores', order.length !== count || state.tie, 'green')));
+      state.tie ? button(control(doc, 'done'), 'Tie done', pending.length < 2 || invalid)
+        : button(control(doc, 'tie'), 'Tie', !canStartTie(teams, remaining)),
+      button(control(doc, 'save'), 'Save scores', order.length !== count || state.tie || invalid, 'green')));
     return {
       content: '',
       allowedMentions: { parse: [] },
@@ -322,20 +359,29 @@ function createLobbyScoring({
     const panel = await fetchMessage(doc, channel, messageId);
     const state = readPanel(doc, panel);
     const order = state.groups.flat();
+    const teams = teamAssignments(doc);
     if (state.source !== sourceId(doc)) throw new Error('The saved scores changed. Reopen the scoring entry before continuing.');
     if (action === 'pick') {
       if (!doc.scoringRoster.some((player) => player.discordId === playerId)) throw new Error('Invalid player.');
       if (order.includes(playerId)) return 'That player is already selected.';
-      if (state.tie) state.groups[state.groups.length - 1].push(playerId);
-      else state.groups.push([playerId]);
+      if (state.tie) {
+        if (teams === null) throw new Error('Team assignments are missing or invalid. Tie entry is unavailable.');
+        const pending = state.groups[state.groups.length - 1];
+        validateTieTeams(teams, [[...pending, playerId]]);
+        pending.push(playerId);
+      } else state.groups.push([playerId]);
     } else if (action === 'tie') {
       if (state.tie) return 'Tie entry is already active.';
       if (doc.scoringRoster.length - order.length < 2) throw new Error('A tie needs at least two remaining players.');
+      if (teams === null) throw new Error('Team assignments are missing or invalid. Tie entry is unavailable.');
+      const remaining = doc.scoringRoster.map((player) => player.discordId).filter((id) => !order.includes(id));
+      if (!canStartTie(teams, remaining)) throw new Error('The remaining players are on the same team and cannot tie.');
       state.groups.push([]);
       state.tie = true;
     } else if (action === 'done') {
       if (!state.tie) throw new Error('There is no unfinished tie.');
       if (state.groups[state.groups.length - 1].length < 2) throw new Error('Select at least two players before pressing Tie done.');
+      validateTieTeams(teams, [state.groups[state.groups.length - 1]]);
       state.tie = false;
     } else if (action === 'undo') {
       const last = state.groups[state.groups.length - 1];
@@ -352,6 +398,7 @@ function createLobbyScoring({
       state.tie = false;
     } else if (action === 'save') {
       if (state.tie) throw new Error('Press Tie done to confirm the tied players before saving scores.');
+      validateTieTeams(teams, state.groups);
       const table = await loadTable(doc, channel);
       if (!table) return 'Scoring is paused. Check the recovery message in the room.';
       const text = scoreRace(table, doc.scoringRoster, state.groups, state.race, pointsFor(doc.type), isBattle(doc));
