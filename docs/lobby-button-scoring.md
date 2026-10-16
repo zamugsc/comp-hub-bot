@@ -2,7 +2,7 @@
 
 The existing startup template and Lorenzi link remain available for manual scoring.
 The first eligible human player accepting the scorekeeper checkmark is persisted on
-the active lobby. Their announcement offers **Enable button scoring** for the full
+the active lobby. Their announcement offers **Enable High IQ scoring** for the full
 default player counts below. Tournaments, survival, 1v1, and reduced or expanded
 rosters retain manual scoring.
 
@@ -34,6 +34,8 @@ or server roles are changed by scoring.
 After activation, the bot pings the scorekeeper with instructions. `!l score` opens
 the next race (or battle round) with its saved map name and stationary player buttons,
 two per row. Selected players are disabled and also rejected as duplicates by the handler.
+The control row reads **Undo last**, **Reset**, **Tie** (or **Tie done**), then
+**Save scores** at the right.
 The prompt advances from **Select 1st place player** to the last position; eighth
 place specifically uses **Select 8th place 🐢**.
 **Undo last** and **Reset** affect only the unfinished entry. **Save scores** requires
@@ -44,7 +46,7 @@ second entry. The visible finishing order carries the draft across bot restarts.
 ## Ties
 
 At a position shared by multiple players, press **Tie**, select all players sharing
-that place, then press **Done tie**. Normal positions still advance after one tap.
+that place, then press **Tie done**. Normal positions still advance after one tap.
 The player buttons stay in the same rows and each player can appear only once.
 **Save scores** remains disabled until all players are selected and any active tie
 is confirmed. Two through all players can share a position, including an eight-way

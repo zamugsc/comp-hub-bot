@@ -48,7 +48,7 @@ function createLobbyScoring({
       if (!room || doc.scoringChannelId !== channel.id || channel.name.toLowerCase() !== `lobby-room-${room.number}`) {
         throw new Error('Use scoring in this lobby\'s current room.');
       }
-      if (requireEnabled && !doc.scoringEnabled) throw new Error('Enable button scoring from the scorekeeper announcement first.');
+      if (requireEnabled && !doc.scoringEnabled) throw new Error('Enable High IQ scoring from the scorekeeper announcement first.');
       return work(doc);
     });
   }
@@ -93,7 +93,7 @@ function createLobbyScoring({
     let next = isBattle(doc) ? state.groups.length + 1 : order.length + 1;
     if (state.tie) next = ranked[ranked.length - 1].place;
     let prompt = 'Double-check the finishing order, then press **Save scores**.';
-    if (state.tie) prompt = `Select players tied for ${ordinal(next)} place.\nPress **Done tie** after selecting at least two players.`;
+    if (state.tie) prompt = `Select players tied for ${ordinal(next)} place.\nPress **Tie done** after selecting at least two players.`;
     else if (order.length < count) prompt = next === 8 ? 'Select 8th place 🐢' : `Select ${ordinal(next)} place player`;
     const components = [];
     for (let i = 0; i < count; i += 2) {
@@ -103,9 +103,9 @@ function createLobbyScoring({
     }
     components.push(row(button(control(doc, 'undo'), 'Undo last', !order.length && !state.tie),
       button(control(doc, 'reset'), 'Reset', !order.length && !state.tie),
-      button(control(doc, 'save'), 'Save scores', order.length !== count || state.tie, 'green'),
-      state.tie ? button(control(doc, 'done'), 'Done tie', state.groups[state.groups.length - 1].length < 2)
-        : button(control(doc, 'tie'), 'Tie', count - order.length < 2)));
+      state.tie ? button(control(doc, 'done'), 'Tie done', state.groups[state.groups.length - 1].length < 2)
+        : button(control(doc, 'tie'), 'Tie', count - order.length < 2),
+      button(control(doc, 'save'), 'Save scores', order.length !== count || state.tie, 'green')));
     return {
       content: '',
       allowedMentions: { parse: [] },
@@ -233,7 +233,7 @@ function createLobbyScoring({
       // Persist the accepted human ID, not whichever reaction user happens to be cached last.
       await update(current, { scorekeeperId: userId });
       const components = eligible(current) && current.scoringTemplateMessageId
-        ? [row(button(control(current, 'activate'), 'Enable button scoring'))] : [];
+        ? [row(button(control(current, 'activate'), 'Enable High IQ scoring'))] : [];
       const announcement = await channel.send({
         content: `${mention(userId)} has volunteered to do scores. Please make sure you keep the lobby updated about mid-match scores.${
           components.length ? '\nScore like you used to, or try new HIGH IQ scoring with button below.' : ''}`,
@@ -298,7 +298,7 @@ function createLobbyScoring({
     await channel.send({
       content: `${mention(doc.scorekeeperId)} HIGH IQ scoring enabled! Type \`!l score\` to start scoring the first ${raceWord(doc)}. `
       + `Tap players in finishing order, double-check, then press **Save scores**. Run \`!l score\` again after each ${raceWord(doc)}. `
-      + 'For a tie, press **Tie** before selecting those players, then press **Done tie**.',
+      + 'For a tie, press **Tie** before selecting those players, then press **Tie done**.',
       allowedMentions: { users: [doc.scorekeeperId] },
     });
     return 'Button scoring enabled.';
@@ -335,7 +335,7 @@ function createLobbyScoring({
       state.tie = true;
     } else if (action === 'done') {
       if (!state.tie) throw new Error('There is no unfinished tie.');
-      if (state.groups[state.groups.length - 1].length < 2) throw new Error('Select at least two players before pressing Done tie.');
+      if (state.groups[state.groups.length - 1].length < 2) throw new Error('Select at least two players before pressing Tie done.');
       state.tie = false;
     } else if (action === 'undo') {
       const last = state.groups[state.groups.length - 1];
@@ -351,7 +351,7 @@ function createLobbyScoring({
       state.groups = [];
       state.tie = false;
     } else if (action === 'save') {
-      if (state.tie) throw new Error('Press Done tie to confirm the tied players before saving scores.');
+      if (state.tie) throw new Error('Press Tie done to confirm the tied players before saving scores.');
       const table = await loadTable(doc, channel);
       if (!table) return 'Scoring is paused. Check the recovery message in the room.';
       const text = scoreRace(table, doc.scoringRoster, state.groups, state.race, pointsFor(doc.type), isBattle(doc));
