@@ -39,8 +39,10 @@ changing which sizes the existing lobby creation and start commands permit.
 Existing lobby defaults are unchanged. The panel uses the actual saved race/arena
 count and ordered map list, including a custom count when configured.
 
-Only that scorekeeper can activate the system, use `!l score`, press entry controls,
+Only that scorekeeper can activate the system, use `!l score` to open an entry, press entry controls,
 edit past races or restore a backup. Staff privileges do not bypass this restriction.
+Anyone in the active lobby room can read `!l score help`, even before activation.
+It explains ties and, for non-battle modes, penalties without opening or changing an entry.
 All panels and results remain public to members with existing room read access;
 successful button presses are acknowledged silently and rejection messages are private. No channel permissions
 or server roles are changed by scoring.
@@ -57,7 +59,10 @@ there is no additional database state or restart recovery.
 
 ## Race entry
 
-After activation, the bot pings the scorekeeper with instructions. `!l score` opens
+After activation, the bot pings the scorekeeper with a short guide covering entry,
+saving, the next race and editing previous races. It points to `!l score help` and
+mentions the configured Staff role without notifying that role. Tie and penalty
+instructions are kept in help. `!l score` opens
 the next race (or battle round) with its saved map name and stationary player buttons,
 two per row. Selected players are disabled and also rejected as duplicates by the handler.
 Battle titles include the announced arena and game mode, for example

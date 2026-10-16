@@ -91,6 +91,8 @@ const ucfirst = require('../utils/ucfirst');
 const lock = new AsyncLock();
 const lobbyScoring = createLobbyScoring({ Lobby, Room, Player, withRoomLock, pointsFor,
   resultContainsBannedPlayer,
+  getStaffRole: (guildId) => client.guilds.cache.get(guildId).roles.cache.find((role) =>
+    role.name.toLowerCase() === config.roles.staff_role.toLowerCase()),
   getSubmissionChannel: (guildId) => client.guilds.cache.get(guildId).channels.cache.find((channel) => channel.type === 'text'
     && channel.name.toLowerCase() === config.channels.ranked_results_submissions_channel.toLowerCase()),
   drawTable: require('../utils/drawTable') });

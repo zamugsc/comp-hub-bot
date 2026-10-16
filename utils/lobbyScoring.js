@@ -11,7 +11,7 @@ function createLobbyScoring({
   Lobby, Room, Player, drawTable, withRoomLock, pointsFor,
   builders = defaultBuilders, log = console.error,
   now = Date.now, setTimer = setTimeout, clearTimer = clearTimeout,
-  getSubmissionChannel = () => null, resultContainsBannedPlayer,
+  getSubmissionChannel = () => null, resultContainsBannedPlayer, getStaffRole = () => null,
 }) {
   const { MessageButton, MessageActionRow } = builders;
   const scorekeeperChanges = new Map();
@@ -487,7 +487,7 @@ function createLobbyScoring({
 
   async function open(doc, channel, args) {
     if (args.length && (args.length !== 2 || args[0] !== 'edit' || !/^[1-9]\d*$/.test(args[1]))) {
-      throw new Error('Use `!l score` or `!l score edit 3`.');
+      throw new Error('Use `!l score`, `!l score edit 3` or `!l score help`.');
     }
     await recoverBattleModes(doc, channel);
     if (doc.scoringPanelId) {
@@ -529,11 +529,36 @@ function createLobbyScoring({
       const number = message.channel.name.match(/^lobby-room-(\d+)$/i);
       const room = number && await Room.findOne({ guild: message.guild.id, number: Number(number[1]) });
       if (!room || !room.lobby) throw new Error('Use `!l score` in an active lobby room with a selected scorekeeper.');
+      if (args.length === 1 && args[0].toLowerCase() === 'help') {
+        const doc = await currentLobby(String(room.lobby), message.guild, message.channel);
+        return await showHelp(doc, message.channel);
+      }
       return await locked(String(room.lobby), message.guild, message.channel, message.author.id,
         (current) => open(current, message.channel, args));
     } catch (error) {
       return message.channel.warn(error.message);
     }
+  }
+
+  function showHelp(doc, channel) {
+    return channel.send({
+      content: '**High IQ Scoring help**\n\n'
+        + '**Ties**\nPress **Tie ⚖️** before selecting the tied players, then press **Tie done**. '
+        + 'If you already selected a tied player normally, press **Undo ↩️** first. '
+        + (/_(?:duos|3v3|4v4)$/.test(doc.type) ? 'Teammates cannot share a tie. ' : '')
+        + 'Each tied player receives the full points for their shared position. '
+        + (isBattle(doc) ? 'The next group takes the next place.' : 'The next position skips the places occupied by the tie.')
+        + (isBattle(doc) ? '' : '\n\n**Penalties**\nEnter every player in their actual finishing order and confirm any ties first. '
+          + 'Then press **Penalty 💀** and select a player.\n'
+          + '• **-4 points** adds one deduction per press. Deductions stack, can make scores negative, and do not change positions.\n'
+          + '• **Last place (0 pts)** toggles zero base points and moves the player to last place. '
+          + 'Other players move up; all players with this penalty share last place. This breaks their original tie and can be combined with -4 deductions.\n'
+          + 'Select another player to adjust their penalties. **Undo ↩️** reverses the latest penalty action. '
+          + 'Press **Penalty done** to return to the review, then **Save scores ✅**.')
+        + `\n\nUse \`!l score\` after each ${raceWord(doc)}, or \`!l score edit #\` to re-enter a saved ${raceWord(doc)}. `
+        + '**Reset ❌** clears the unfinished entry. Only the selected scorekeeper can change scores.',
+      allowedMentions: { parse: [] },
+    });
   }
 
   async function closeScorekeeperChange(lobbyId, pending, content) {
@@ -617,14 +642,14 @@ function createLobbyScoring({
     await update(doc, { scoringEnabled: true });
     const announcement = await fetchMessage(doc, channel, messageId);
     await announcement.edit({ components: [row(button(control(doc, 'activate'), 'High IQ Scoring enabled', true))] });
+    const staff = getStaffRole(doc.guild);
     await channel.send({
-      content: `${mention(doc.scorekeeperId)} **High IQ Scoring** enabled! Type \`!l score\` to start scoring the first ${raceWord(doc)}. `
-      + `Tap players in finishing order, double-check, then press **Save scores ✅**. Run \`!l score\` again after each ${raceWord(doc)}. `
-      + 'For a tie, press **Tie ⚖️** before selecting tied players, then press **Tie done**.'
-      + (isBattle(doc) ? '' : '\nAfter entering every player and confirming any tie, press **Penalty 💀** to apply deductions or a last-place penalty. '
-        + 'Select a player, adjust their penalties, then press **Penalty done** before saving.')
-      + '\nTo go back and edit a previous race, use `!l score edit #`, and replace # with the race number.',
-      allowedMentions: { users: [doc.scorekeeperId] },
+      content: `**${mention(doc.scorekeeperId)}** **High IQ Scoring** enabled! Type \`!l score\` to start scoring the first ${raceWord(doc)}.\n`
+      + 'Tap players in finishing order, double-check, then press **Save scores ✅**.\n\n'
+      + `Type \`!l score\` again after each ${raceWord(doc)}. To go back and edit a previous ${raceWord(doc)}, `
+      + `use \`!l score edit #\`, and replace # with the ${raceWord(doc)} number. `
+      + `Use \`!l score help\` or ping ${staff ? `<@&${staff.id}>` : '@Staff'} if you need help!`,
+      allowedMentions: { parse: [], users: [doc.scorekeeperId] },
     });
     return '**High IQ Scoring** enabled.';
   }
