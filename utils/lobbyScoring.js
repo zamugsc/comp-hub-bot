@@ -10,8 +10,10 @@ const teamMarkers = ['🟦', '🟥', '🟩', '🟨'];
 function createLobbyScoring({
   Lobby, Room, Player, drawTable, withRoomLock, pointsFor,
   builders = defaultBuilders, log = console.error,
+  now = Date.now, setTimer = setTimeout, clearTimer = clearTimeout,
 }) {
   const { MessageButton, MessageActionRow } = builders;
+  const scorekeeperChanges = new Map();
   const idOf = (doc) => String(doc.id || doc._id);
   const button = (id, label, disabled = false, style = 'grey', emoji = null) => {
     const result = new MessageButton().setID(id).setLabel(label).setStyle(style)
@@ -76,20 +78,25 @@ function createLobbyScoring({
     return doc;
   }
 
+  async function currentLobby(lobbyId, guild, channel) {
+    const doc = await Lobby.findOne({ _id: lobbyId, guild: guild.id, started: true });
+    if (!doc) throw new Error('This lobby has ended.');
+    const room = await Room.findOne({ guild: guild.id, lobby: doc._id });
+    if (!room || doc.scoringChannelId !== channel.id || channel.name.toLowerCase() !== `lobby-room-${room.number}`) {
+      throw new Error('Use scoring in this lobby\'s current room.');
+    }
+    return doc;
+  }
+
   async function locked(lobbyId, guild, channel, userId, work, requireEnabled = true, acknowledged = null) {
     return withRoomLock(guild.id, async () => {
       if (acknowledged) {
         const error = await acknowledged;
         if (error) throw error;
       }
-      const doc = await Lobby.findOne({ _id: lobbyId, guild: guild.id, started: true });
-      if (!doc) throw new Error('This lobby has ended.');
+      const doc = await currentLobby(lobbyId, guild, channel);
       if (doc.scorekeeperId !== userId) throw new Error('Only the selected scorekeeper can use this.');
       if (!eligible(doc)) throw new Error('Button scoring is not available for this lobby format.');
-      const room = await Room.findOne({ guild: guild.id, lobby: doc._id });
-      if (!room || doc.scoringChannelId !== channel.id || channel.name.toLowerCase() !== `lobby-room-${room.number}`) {
-        throw new Error('Use scoring in this lobby\'s current room.');
-      }
       if (requireEnabled && !doc.scoringEnabled) throw new Error('Enable **High IQ Scoring** from the scorekeeper announcement first.');
       return work(doc);
     });
@@ -369,6 +376,81 @@ function createLobbyScoring({
     }
   }
 
+  async function closeScorekeeperChange(lobbyId, pending, content) {
+    if (scorekeeperChanges.get(lobbyId) !== pending) return;
+    scorekeeperChanges.delete(lobbyId);
+    clearTimer(pending.timer);
+    await pending.message.edit({
+      content,
+      allowedMentions: { parse: [] },
+      components: [row(button(`score:${lobbyId}:acceptkeeper`, 'Accept scorekeeper duty', true, 'green'))],
+    }).catch((error) => log('Could not update scorekeeper change request:', error));
+  }
+
+  async function changeScorekeeper(message, args) {
+    try {
+      const target = args.length === 1 && args[0].match(/^<@!?(\d+)>$/);
+      const user = target && message.mentions.users.get(target[1]);
+      if (!user || user.bot || user.id === message.author.id) {
+        throw new Error('Use `!l change scorekeeper @player` and mention one other human player in your lobby.');
+      }
+      const number = message.channel.name.match(/^lobby-room-(\d+)$/i);
+      const room = number && await Room.findOne({ guild: message.guild.id, number: Number(number[1]) });
+      if (!room || !room.lobby) throw new Error('Use `!l change scorekeeper @player` in your active lobby room.');
+      const lobbyId = String(room.lobby);
+      return await locked(lobbyId, message.guild, message.channel, message.author.id, async (doc) => {
+        if (!doc.players.includes(user.id)) throw new Error('The new scorekeeper must be a player in this lobby.');
+        const previous = scorekeeperChanges.get(lobbyId);
+        if (previous) {
+          if (now() < previous.expiresAt) throw new Error('A scorekeeper change is already awaiting acceptance in this lobby.');
+          await closeScorekeeperChange(lobbyId, previous, 'Scorekeeper change timed out. The current scorekeeper keeps control.');
+        }
+        const request = await message.channel.send({
+          content: `${mention(user.id)}, ${mention(doc.scorekeeperId)} has asked you to take over scorekeeping. Accept within 1 minute.`,
+          allowedMentions: { users: [user.id] },
+          components: [row(button(control(doc, 'acceptkeeper'), 'Accept scorekeeper duty', false, 'green'))],
+        });
+        const pending = { from: doc.scorekeeperId, to: user.id, message: request, expiresAt: now() + 60000 };
+        scorekeeperChanges.set(lobbyId, pending);
+        // Release the shared room lock while the player decides.
+        pending.timer = setTimer(() => withRoomLock(message.guild.id, () => closeScorekeeperChange(lobbyId, pending,
+          'Scorekeeper change timed out. The current scorekeeper keeps control.')).catch(log), 60000);
+        if (pending.timer.unref) pending.timer.unref();
+        return request;
+      }, false);
+    } catch (error) {
+      return message.channel.warn(error.message);
+    }
+  }
+
+  async function acceptScorekeeperChange(lobbyId, interaction, acknowledged) {
+    return withRoomLock(interaction.guild.id, async () => {
+      const error = await acknowledged;
+      if (error) throw error;
+      const pending = scorekeeperChanges.get(lobbyId);
+      if (!pending || pending.message.id !== interaction.message.id
+        || pending.message.channel.id !== interaction.message.channel.id) {
+        throw new Error('This scorekeeper change request is no longer active.');
+      }
+      if (now() >= pending.expiresAt) {
+        await closeScorekeeperChange(lobbyId, pending, 'Scorekeeper change timed out. The current scorekeeper keeps control.');
+        throw new Error('This scorekeeper change request has expired.');
+      }
+      if (interaction.clicker.id !== pending.to) throw new Error('Only the invited player can accept scorekeeper duty.');
+      const doc = await currentLobby(lobbyId, interaction.guild, interaction.message.channel);
+      if (doc.scorekeeperId !== pending.from || !doc.players.includes(pending.to)) {
+        await closeScorekeeperChange(lobbyId, pending, 'Scorekeeper change cancelled because the scorekeeper or lobby players changed.');
+        throw new Error('The scorekeeper or lobby players changed. Request a new transfer.');
+      }
+      await update(doc, { scorekeeperId: pending.to });
+      let next = doc.scoringEnabled ? ' Type `!l score` to continue scoring.' : '';
+      if (doc.scoringPanelId) next = ` Continue the unfinished entry: ${url(doc, doc.scoringPanelId)}`;
+      else if (!doc.scoringEnabled && doc.scoringOfferId) next = ` [Enable High IQ Scoring](${url(doc, doc.scoringOfferId)}) when ready.`;
+      await closeScorekeeperChange(lobbyId, pending,
+        `${mention(pending.to)} has accepted scorekeeper duty from ${mention(pending.from)}.${next}`);
+    });
+  }
+
   async function activate(doc, channel, messageId) {
     if (doc.scoringOfferId !== messageId) throw new Error('This activation button is no longer current.');
     if (doc.scoringEnabled) return '**High IQ Scoring** is already enabled. Run `!l score` to continue.';
@@ -467,6 +549,7 @@ function createLobbyScoring({
       // Acknowledge before database work or a queued lock can exceed Discord's deadline.
       const acknowledged = interaction.reply.defer().then(() => null, (error) => error);
       const { channel } = interaction.message;
+      if (match[2] === 'acceptkeeper') return await acceptScorekeeperChange(match[1], interaction, acknowledged);
       // Reserve the queue immediately: acknowledgements may complete out of order.
       await locked(match[1], interaction.guild, channel, interaction.clicker.id,
         async (doc) => {
@@ -497,7 +580,7 @@ function createLobbyScoring({
   }
 
   return {
-    initialise, selectScorekeeper, command, handleButton, eligible, setTracks,
+    initialise, selectScorekeeper, command, changeScorekeeper, handleButton, eligible, setTracks,
   };
 }
 

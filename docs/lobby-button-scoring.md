@@ -45,6 +45,16 @@ All panels and results remain public to members with existing room read access;
 successful button presses are acknowledged silently and rejection messages are private. No channel permissions
 or server roles are changed by scoring.
 
+For supported button-scoring formats, the current scorekeeper can use
+`!l change scorekeeper @player` in the lobby room to invite one other human lobby
+player to take over. Only that player can press
+**Accept scorekeeper duty**, within 60 seconds. The original scorekeeper retains
+control until acceptance; a timeout disables the request and leaves ownership
+unchanged. Only one request can be pending per lobby. Acceptance transfers the
+existing panel, unfinished selections, editing and recovery rights without changing
+scores or enabling High IQ Scoring automatically. Requests are temporary in memory;
+there is no additional database state or restart recovery.
+
 ## Race entry
 
 After activation, the bot pings the scorekeeper with instructions. `!l score` opens

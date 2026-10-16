@@ -1683,6 +1683,9 @@ module.exports = {
     }
 
     if (action.toLowerCase() === 'score') return lobbyScoring.command(message, args.slice(1));
+    if (action.toLowerCase() === 'change' && (args[1] || '').toLowerCase() === 'scorekeeper') {
+      return lobbyScoring.changeScorekeeper(message, args.slice(2));
+    }
 
     if (action === 'custom') {
       action = 'new';
