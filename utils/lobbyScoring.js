@@ -1,6 +1,6 @@
 const defaultBuilders = require('discord-buttons');
 const {
-  readTemplate, extractTemplate, scoreRace, rankGroups, ordinal,
+  readTemplate, extractTemplate, scoreRace, raceAwards, rankGroups, ordinal,
 } = require('./scoreTable');
 
 // Same team order as generateTemplate's blue, red, green and yellow colors.
@@ -14,6 +14,7 @@ function createLobbyScoring({
 }) {
   const { MessageButton, MessageActionRow } = builders;
   const scorekeeperChanges = new Map();
+  const penaltyHistory = new Map();
   const idOf = (doc) => String(doc.id || doc._id);
   const button = (id, label, disabled = false, style = 'grey', emoji = null) => {
     const result = new MessageButton().setID(id).setLabel(label).setStyle(style)
@@ -162,34 +163,65 @@ function createLobbyScoring({
     }
   }
 
-  function panelPayload(doc, state) {
+  function panelPayload(doc, state, history = penaltyHistory.get(idOf(doc)) || []) {
     const count = doc.scoringRoster.length;
     const order = state.groups.flat();
     const teams = teamAssignments(doc);
     const pending = state.tie ? state.groups[state.groups.length - 1] : [];
     const remaining = doc.scoringRoster.map((player) => player.discordId).filter((id) => !order.includes(id));
     const invalid = state.groups.some((group) => invalidTie(teams, group));
+    const complete = order.length === count && !state.tie && !invalid;
+    const penalties = state.penalties || [];
     const ranked = rankGroups(state.groups, isBattle(doc));
     let next = isBattle(doc) ? state.groups.length + 1 : order.length + 1;
     if (state.tie) next = ranked[ranked.length - 1].place;
     let prompt = 'Double-check the finishing order, then press **Save scores ✅**.';
-    if (state.tie) prompt = `Select players tied for ${ordinal(next)} place.\nPress **Tie done ⚖️** after selecting at least two players.`;
+    if (state.tie) prompt = `Select players tied for ${ordinal(next)} place.\nPress **Tie done** after selecting at least two players.`;
     else if (order.length < count) prompt = next === 8 ? 'Select 8th place 🐢' : `Select ${ordinal(next)} place player`;
+    if (state.penaltyMode) prompt = state.penaltyPlayer
+      ? `Adjust penalties for ${mention(state.penaltyPlayer)}. Each **-4 points** press adds one deduction; **Last place (0 pts)** toggles the last-place penalty.\nPress **Penalty done** to return to the score review.`
+      : 'Select a player below to adjust their penalties, then press **-4 points** or **Last place (0 pts)**.';
     if (invalid) prompt += '\nTeammates cannot share a tie. Use **Undo ↩️** or **Reset ❌** to correct the entry.';
     else if (teams === null) prompt += '\nTeam assignments are unavailable. Ties are disabled.';
     const components = [];
     for (let i = 0; i < count; i += 2) {
       components.push(row(...doc.scoringRoster.slice(i, i + 2).map((player) => button(
-        control(doc, 'pick', player.discordId), player.name.slice(0, 80), order.includes(player.discordId)
-          || (state.tie && (teams === null || sameTeam(teams, player.discordId, pending))),
-        'grey', teams && teamMarkers[teams.get(player.discordId)],
+        control(doc, 'pick', player.discordId), player.name.slice(0, 80), !state.penaltyMode && (order.includes(player.discordId)
+          || (state.tie && (teams === null || sameTeam(teams, player.discordId, pending)))),
+        state.penaltyMode && state.penaltyPlayer === player.discordId ? 'blurple' : 'grey',
+        teams && teamMarkers[teams.get(player.discordId)],
       ))));
     }
-    components.push(row(button(control(doc, 'undo'), 'Undo ↩️', !order.length && !state.tie),
-      button(control(doc, 'reset'), 'Reset ❌', !order.length && !state.tie),
-      state.tie ? button(control(doc, 'done'), 'Tie done ⚖️', pending.length < 2 || invalid)
-        : button(control(doc, 'tie'), 'Tie ⚖️', !canStartTie(teams, remaining)),
-      button(control(doc, 'save'), 'Save scores ✅', order.length !== count || state.tie || invalid, 'green')));
+    if (state.penaltyMode) {
+      components.push(row(button(control(doc, 'undo'), 'Undo ↩️', !history.length),
+        button(control(doc, 'minus'), '-4 points', !state.penaltyPlayer),
+        button(control(doc, 'last'), 'Last place (0 pts)', !state.penaltyPlayer,
+          penalties.some((entry) => entry.playerId === state.penaltyPlayer && entry.last) ? 'red' : 'grey'),
+        button(control(doc, 'penaltydone'), 'Penalty done')));
+    } else {
+      const controls = [button(control(doc, 'undo'), 'Undo ↩️', !order.length && !state.tie),
+        button(control(doc, 'reset'), 'Reset ❌', !order.length && !state.tie),
+        state.tie ? button(control(doc, 'done'), 'Tie done', pending.length < 2 || invalid)
+          : button(control(doc, 'tie'), 'Tie ⚖️', !canStartTie(teams, remaining))];
+      if (!isBattle(doc)) controls.push(button(control(doc, 'penalty'), 'Penalty 💀', !complete));
+      controls.push(button(control(doc, 'save'), 'Save scores ✅', !complete, 'green'));
+      components.push(row(...controls));
+    }
+    const fields = [{
+      name: penalties.length ? 'Original finishing order' : 'Finishing order',
+      value: order.length ? ranked.flatMap(({ place, players }) => players.map((id) => {
+        const player = doc.scoringRoster.find((entry) => entry.discordId === id);
+        return `${place}. ${player.name} ${mention(id)}`;
+      })).join('\n') : 'No players selected yet.',
+    }];
+    if (state.penaltyMode) fields.push({ name: 'Penalty player', value: state.penaltyPlayer ? mention(state.penaltyPlayer) : 'Select a player below.' });
+    if (penalties.length) fields.push({ name: 'Penalties', value: penalties.map((entry) =>
+      `${mention(entry.playerId)}: ${entry.count ? `-${entry.count * 4}` : '0'} points${entry.last ? '; last place' : ''}`).join('\n') });
+    if (penalties.length && complete) {
+      const awards = raceAwards(state.groups, pointsFor(doc.type, count), isBattle(doc), penalties);
+      fields.push({ name: 'Adjusted scores', value: [...awards].sort((a, b) => a[1].place - b[1].place)
+        .map(([id, award]) => `${award.place}. ${mention(id)} — ${award.cell}${award.cell.includes('-') ? ` = ${award.total}` : ''} pts`).join('\n') });
+    }
     return {
       content: '',
       allowedMentions: { parse: [] },
@@ -198,13 +230,7 @@ function createLobbyScoring({
         title: isBattle(doc) ? `Battle ${state.race}/${doc.trackCount} — ${mapLabel(doc, state.race)}`
           : `Race ${state.race} / ${doc.trackCount} — ${mapLabel(doc, state.race)}`,
         description: `${prompt}\n[Previous scores](${url(doc, state.source)})`,
-        fields: [{
-          name: 'Finishing order',
-          value: order.length ? ranked.flatMap(({ place, players }) => players.map((id) => {
-            const player = doc.scoringRoster.find((entry) => entry.discordId === id);
-            return `${place}. ${player.name} ${mention(id)}`;
-          })).join('\n') : 'No players selected yet.',
-        }],
+        fields,
       },
     };
   }
@@ -216,7 +242,7 @@ function createLobbyScoring({
     if (!race || !source || Number(race[1]) < 1 || Number(race[1]) > doc.trackCount) {
       throw new Error('The unfinished scoring panel could not be read.');
     }
-    const field = (embed.fields || []).find((entry) => entry.name === 'Finishing order');
+    const field = (embed.fields || []).find((entry) => ['Finishing order', 'Original finishing order'].includes(entry.name));
     if (!field) throw new Error('The unfinished scoring selections are missing.');
     const lines = field.value === 'No players selected yet.' ? [] : field.value.split('\n');
     const selected = lines.map((line) => line.match(/^(\d+)\. .* <@!?(\d+)>$/));
@@ -255,8 +281,26 @@ function createLobbyScoring({
       if (place === nextPlace && order.length <= doc.scoringRoster.length - 2) groups.push([]);
       else if (place !== currentPlace) throw new Error('The unfinished tie position is invalid.');
     }
+    const penaltyField = (embed.fields || []).find((entry) => entry.name === 'Penalties');
+    const penalties = penaltyField ? penaltyField.value.split('\n').map((line) => {
+      const match = line.match(/^<@!?(\d+)>: (-?\d+) points(; last place)?$/);
+      const deduction = match && -Number(match[2]);
+      if (!match || !doc.scoringRoster.some((player) => player.discordId === match[1])
+        || !Number.isSafeInteger(deduction) || deduction < 0 || deduction % 4 !== 0 || (!deduction && !match[3])) {
+        throw new Error('The unfinished penalties are invalid.');
+      }
+      return { playerId: match[1], count: deduction / 4, last: Boolean(match[3]) };
+    }) : [];
+    if (new Set(penalties.map((entry) => entry.playerId)).size !== penalties.length) throw new Error('The unfinished penalties are invalid.');
+    const targetField = (embed.fields || []).find((entry) => entry.name === 'Penalty player');
+    const target = targetField && targetField.value.match(/^<@!?(\d+)>$/);
+    if (targetField && ((!target && targetField.value !== 'Select a player below.')
+      || (target && !doc.scoringRoster.some((player) => player.discordId === target[1]))
+      || order.length !== doc.scoringRoster.length || tiePrompt)) throw new Error('The unfinished penalty selection is invalid.');
+    if (isBattle(doc) && (penalties.length || targetField)) throw new Error('Penalties are not available in battle modes.');
     return {
       race: Number(race[1]), source: source[1], groups, tie: Boolean(tiePrompt),
+      penalties, penaltyMode: Boolean(targetField), penaltyPlayer: target ? target[1] : null,
     };
   }
 
@@ -359,6 +403,7 @@ function createLobbyScoring({
     const state = {
       race, source: sourceId(doc), groups: [], tie: false,
     };
+    penaltyHistory.delete(idOf(doc));
     const panel = await channel.send(panelPayload(doc, state));
     await update(doc, { scoringPanelId: panel.id });
     return panel;
@@ -460,7 +505,9 @@ function createLobbyScoring({
     await channel.send({
       content: `${mention(doc.scorekeeperId)} **High IQ Scoring** enabled! Type \`!l score\` to start scoring the first ${raceWord(doc)}. `
       + `Tap players in finishing order, double-check, then press **Save scores ✅**. Run \`!l score\` again after each ${raceWord(doc)}. `
-      + 'For a tie, press **Tie ⚖️** before selecting tied players, then press **Tie done ⚖️**.'
+      + 'For a tie, press **Tie ⚖️** before selecting tied players, then press **Tie done**.'
+      + (isBattle(doc) ? '' : '\nAfter entering every player and confirming any tie, press **Penalty 💀** to apply deductions or a last-place penalty. '
+        + 'Select a player, adjust their penalties, then press **Penalty done** before saving.')
       + '\nTo go back and edit a previous race, use `!l score edit #`, and replace # with the race number.',
       allowedMentions: { users: [doc.scorekeeperId] },
     });
@@ -476,6 +523,7 @@ function createLobbyScoring({
     const values = { scoringRecoveryId: null, scoringPanelId: null };
     values[doc.scoringMessageId ? 'scoringMessageId' : 'scoringTemplateMessageId'] = restored.id;
     await update(doc, values);
+    penaltyHistory.delete(idOf(doc));
     await deletePanel(doc, channel, oldPanel);
     return 'Backup restored. Run `!l score` to continue.';
   }
@@ -486,11 +534,46 @@ function createLobbyScoring({
     const state = readPanel(doc, panel);
     const order = state.groups.flat();
     const teams = teamAssignments(doc);
+    let history = penaltyHistory.get(idOf(doc)) || [];
     if (state.source !== sourceId(doc)) throw new Error('The saved scores changed. Reopen the scoring entry before continuing.');
-    if (action === 'pick') {
+    if (isBattle(doc) && ['penalty', 'minus', 'last', 'penaltydone'].includes(action)) {
+      throw new Error('Penalties are not available in battle modes.');
+    }
+    if (state.penaltyMode && !['pick', 'minus', 'last', 'penaltydone', 'undo'].includes(action)) {
+      throw new Error('Press Penalty done to return to the finishing order before continuing.');
+    }
+    if (action === 'penalty') {
+      if (order.length !== doc.scoringRoster.length || state.tie) throw new Error('Finish entering every player and confirm any tie before applying penalties.');
+      validateTieTeams(teams, state.groups);
+      state.penaltyMode = true;
+      state.penaltyPlayer = null;
+    } else if (action === 'minus' || action === 'last') {
+      if (!state.penaltyMode || !state.penaltyPlayer) throw new Error('Open Penalty 💀 and select a player first.');
+      const before = state.penalties.find((entry) => entry.playerId === state.penaltyPlayer)
+        || { playerId: state.penaltyPlayer, count: 0, last: false };
+      const changed = { ...before };
+      if (action === 'minus') changed.count += 1;
+      else changed.last = !changed.last;
+      if (!Number.isSafeInteger(changed.count * 4)) throw new Error('Invalid player penalty.');
+      history = [...history, before];
+      state.penalties = state.penalties.filter((entry) => entry.playerId !== changed.playerId);
+      if (changed.count || changed.last) state.penalties.push(changed);
+    } else if (action === 'penaltydone') {
+      if (!state.penaltyMode) throw new Error('There is no penalty entry in progress.');
+      state.penaltyMode = false;
+      state.penaltyPlayer = null;
+    } else if (action === 'undo' && state.penaltyMode) {
+      const before = history[history.length - 1];
+      if (!before) throw new Error('There is no penalty action to undo.');
+      history = history.slice(0, -1);
+      state.penalties = state.penalties.filter((entry) => entry.playerId !== before.playerId);
+      if (before.count || before.last) state.penalties.push(before);
+      state.penaltyPlayer = before.playerId;
+    } else if (action === 'pick') {
       if (!doc.scoringRoster.some((player) => player.discordId === playerId)) throw new Error('Invalid player.');
-      if (order.includes(playerId)) return 'That player is already selected.';
-      if (state.tie) {
+      if (state.penaltyMode) state.penaltyPlayer = playerId;
+      else if (order.includes(playerId)) return 'That player is already selected.';
+      else if (state.tie) {
         if (teams === null) throw new Error('Team assignments are missing or invalid. Tie entry is unavailable.');
         const pending = state.groups[state.groups.length - 1];
         validateTieTeams(teams, [[...pending, playerId]]);
@@ -506,7 +589,7 @@ function createLobbyScoring({
       state.tie = true;
     } else if (action === 'done') {
       if (!state.tie) throw new Error('There is no unfinished tie.');
-      if (state.groups[state.groups.length - 1].length < 2) throw new Error('Select at least two players before pressing Tie done ⚖️.');
+      if (state.groups[state.groups.length - 1].length < 2) throw new Error('Select at least two players before pressing Tie done.');
       validateTieTeams(teams, [state.groups[state.groups.length - 1]]);
       state.tie = false;
     } else if (action === 'undo') {
@@ -522,12 +605,15 @@ function createLobbyScoring({
     } else if (action === 'reset') {
       state.groups = [];
       state.tie = false;
+      state.penalties = [];
+      history = [];
     } else if (action === 'save') {
-      if (state.tie) throw new Error('Press Tie done ⚖️ to confirm the tied players before saving scores.');
+      if (state.tie) throw new Error('Press Tie done to confirm the tied players before saving scores.');
       validateTieTeams(teams, state.groups);
       const table = await loadTable(doc, channel);
       if (!table) return 'Scoring is paused. Check the recovery message in the room.';
-      const text = scoreRace(table, doc.scoringRoster, state.groups, state.race, pointsFor(doc.type, doc.players.length), isBattle(doc));
+      const text = scoreRace(table, doc.scoringRoster, state.groups, state.race,
+        pointsFor(doc.type, doc.players.length), isBattle(doc), state.penalties);
       const completed = Math.max(table.races, state.race);
       const posted = await postResults(doc, channel, text,
         `✅ ${raceTitle(doc)} ${state.race} saved — ${mapLabel(doc, state.race)}. ${completed} / ${doc.trackCount} ${raceWord(doc)}s scored.${
@@ -535,10 +621,13 @@ function createLobbyScoring({
       await update(doc, {
         scoringMessageId: posted.id, scoringBackup: text, scoringPanelId: null, scoringRecoveryId: null,
       });
+      penaltyHistory.delete(idOf(doc));
       await deletePanel(doc, channel, panel.id);
       return 'Scores saved.';
     } else throw new Error('Unknown scoring action.');
-    await panel.edit(panelPayload(doc, state));
+    await panel.edit(panelPayload(doc, state, history));
+    if (history.length) penaltyHistory.set(idOf(doc), history);
+    else penaltyHistory.delete(idOf(doc));
     return 'Scoring entry updated.';
   }
 

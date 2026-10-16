@@ -9,13 +9,17 @@ function readTemplate(text, roster = null, initial = false) {
     if (!line.trim() || line.startsWith('#')) return;
     const match = line.match(/^(.+?)\s+(\d[^\s]*)$/);
     if (!match) return;
-    if (!/^\d+(?:\|\d+)*$/.test(match[2])) {
-      throw new Error('Invalid race columns: use numbers separated by |, without a trailing |.');
+    if (!/^\d+(?:-\d+)?(?:\|\d+(?:-\d+)?)*$/.test(match[2])) {
+      throw new Error('Invalid race columns: use scores such as 9 or 9-4 separated by |, without a trailing |.');
     }
-    const scores = match[2].split('|').map(Number);
-    if (scores.some((value) => !Number.isSafeInteger(value))) throw new Error('Invalid score value.');
+    const cells = match[2].split('|');
+    const scores = cells.map((cell) => {
+      const [base, deduction = 0] = cell.split('-').map(Number);
+      if (![base, deduction, base - deduction].every(Number.isSafeInteger)) throw new Error('Invalid score value.');
+      return base - deduction;
+    });
     rows.push({
-      index, prefix: match[1], name: match[1].replace(/\s+\[[^\]]+\]$/, ''), scores,
+      index, prefix: match[1], name: match[1].replace(/\s+\[[^\]]+\]$/, ''), scores, cells,
     });
   });
   const count = roster ? roster.length : rows.length;
@@ -31,10 +35,10 @@ function readTemplate(text, roster = null, initial = false) {
     throw new Error('Every player must have the same number of race columns.');
   }
   if (initial) {
-    if (rows.some((row) => row.scores.some((score) => score !== 0))) {
+    if (rows.some((row) => row.cells.some((cell) => !/^0+$/.test(cell)))) {
       throw new Error('The startup template already contains scores. Mid-match importing is not supported.');
     }
-    rows.forEach((row) => { row.scores = []; });
+    rows.forEach((row) => { row.scores = []; row.cells = []; });
   }
   return { lines, rows, races: initial ? 0 : races };
 }
@@ -56,7 +60,38 @@ function rankGroups(groups, battle = false) {
   });
 }
 
-function scoreRace(table, roster, selections, race, points, battle = false) {
+// Always derive placements from the original finishing groups, never an already adjusted order.
+function raceAwards(groups, points, battle = false, penalties = []) {
+  const order = groups.flat();
+  if (!Array.isArray(points) || points.length !== order.length
+    || points.some((point) => !Number.isSafeInteger(point) || point < 0)) {
+    throw new Error('This lobby mode does not have a configured points system for this player count.');
+  }
+  const adjustments = new Map();
+  for (const penalty of penalties) {
+    if (!order.includes(penalty.playerId) || adjustments.has(penalty.playerId)
+      || !Number.isSafeInteger(penalty.count) || penalty.count < 0
+      || !Number.isSafeInteger(penalty.count * 4) || typeof penalty.last !== 'boolean') {
+      throw new Error('Invalid player penalty.');
+    }
+    adjustments.set(penalty.playerId, penalty);
+  }
+  const adjusted = groups.map((group) => group.filter((id) => !adjustments.get(id)?.last)).filter((group) => group.length);
+  const awards = new Map();
+  rankGroups(adjusted, battle).forEach(({ place, players }) => {
+    players.forEach((id) => awards.set(id, { place, base: points[place - 1] }));
+  });
+  order.forEach((id) => {
+    const penalty = adjustments.get(id);
+    if (penalty?.last) awards.set(id, { place: points.length, base: 0 });
+    const award = awards.get(id);
+    const deduction = (penalty?.count || 0) * 4;
+    Object.assign(award, { cell: deduction ? `${award.base}-${deduction}` : String(award.base), total: award.base - deduction });
+  });
+  return awards;
+}
+
+function scoreRace(table, roster, selections, race, points, battle = false, penalties = []) {
   if (!Number.isInteger(race) || race < 1 || race > table.races + 1) throw new Error('Invalid race number.');
   const count = roster.length;
   // Accept the original flat order too, so callers and old drafts remain compatible.
@@ -66,18 +101,12 @@ function scoreRace(table, roster, selections, race, points, battle = false) {
     || order.some((id) => !roster.some((player) => player.discordId === id))) {
     throw new Error(`Select all ${count} players exactly once before saving scores.`);
   }
-  if (!Array.isArray(points) || points.length !== count || points.some((point) => !Number.isSafeInteger(point) || point < 0)) {
-    throw new Error('This lobby mode does not have a configured points system for this player count.');
-  }
   const lines = table.lines.slice();
-  const awards = new Map();
-  rankGroups(groups, battle).forEach(({ place, players }) => {
-    players.forEach((id) => awards.set(id, points[place - 1]));
-  });
+  const awards = raceAwards(groups, points, battle, penalties);
   table.rows.forEach((row) => {
     const player = roster.find((entry) => entry.prefix === row.prefix);
-    const scores = row.scores.slice();
-    scores[race - 1] = awards.get(player.discordId);
+    const scores = (row.cells || row.scores).slice();
+    scores[race - 1] = awards.get(player.discordId).cell;
     lines[row.index] = `${row.prefix} ${scores.join('|')}`;
   });
   return lines.join('\n');
@@ -88,5 +117,5 @@ function ordinal(number) {
 }
 
 module.exports = {
-  readTemplate, extractTemplate, scoreRace, rankGroups, ordinal,
+  readTemplate, extractTemplate, scoreRace, raceAwards, rankGroups, ordinal,
 };

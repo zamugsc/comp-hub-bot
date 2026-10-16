@@ -71,8 +71,8 @@ Team player buttons carry the table's matching color marker: Team A 🟦, Team B
 Team C 🟩 and Team D 🟨. Teammates share a marker, derived from the saved team
 list rather than their position in the button grid. FFA names have no team marker.
 These standard emoji need no custom server emoji and remain on disabled buttons.
-The control row reads **Undo ↩️**, **Reset ❌**, **Tie ⚖️** (or **Tie done ⚖️**), then
-**Save scores ✅** at the right.
+The control row reads **Undo ↩️**, **Reset ❌**, **Tie ⚖️** (or **Tie done**),
+**Penalty 💀** in non-battle modes, then **Save scores ✅** at the right.
 The prompt advances from **Select 1st place player** to the last position; eighth
 place specifically uses **Select 8th place 🐢**.
 **Undo ↩️** and **Reset ❌** affect only the unfinished entry. **Save scores ✅** requires
@@ -84,7 +84,7 @@ second entry. The visible finishing order carries the draft across bot restarts.
 
 ## Ties
 
-Press **Tie ⚖️** before selecting tied players, then press **Tie done ⚖️**.
+Press **Tie ⚖️** before selecting tied players, then press **Tie done**.
 Normal positions still advance after one tap.
 The player buttons stay in the same rows and each player can appear only once.
 **Save scores ✅** remains disabled until all players are selected and any active tie
@@ -113,6 +113,37 @@ then **Tie ⚖️**. While entering a tie, Undo removes the most recent selectio
 empty tie it cancels tie entry. Undo on a confirmed tie removes its last player
 and reopens the group for correction. Reset ❌ clears the whole unfinished entry.
 Existing unfinished panels from before tie support remain readable.
+
+## Penalties
+
+Non-battle scoring offers **Penalty 💀** after every player has a finishing position
+and any tie is confirmed. It stays disabled for incomplete or invalid entries.
+Battle panels have no penalty controls, and forged penalty actions are rejected.
+
+Enter the actual finishing order first. Press **Penalty 💀**, select a player using
+the existing player buttons, then use **-4 points** and **Last place (0 pts)**.
+The selected player's button is highlighted. Each **-4 points** press adds another
+type A deduction, without a gameplay cap or zero floor. Type A never changes positions.
+**Last place (0 pts)** toggles type B: the player receives zero base points and is
+removed from their original position or tie. Everyone else moves up, retaining
+their remaining ties under the normal racing rules. All type B recipients share
+last place and zero base points, including teammates. Type A deductions still apply
+to them. Toggling B off restores the original order and ties.
+
+While applying penalties, the control row becomes **Undo ↩️**, **-4 points**,
+**Last place (0 pts)**, **Penalty done**. Undo reverses the latest penalty action;
+selecting another player does not create an undo step. **Penalty done** returns to
+review without saving. Saving, resetting or changing finishing positions is blocked
+until penalty entry is closed. Normal Undo can then change finishing positions,
+disabling **Penalty 💀** again until entry is complete. Reset clears the whole
+unfinished entry, including penalties. The review shows adjusted places and scores.
+
+The saved race cell retains deductions: `9-4`, `9-8`, `9-12`, or `0-4` for B plus A.
+These evaluate to 5, 1, -3 and -4 respectively. A B-only cell is `0`. Appending races,
+correcting another race and restoring a backup preserve the other cells' deductions.
+Correcting a scored race uses the existing full re-entry flow, including its penalties.
+The existing renderer understands this notation and is unchanged. Penalties live in
+the unfinished panel and saved score template; no new database fields are needed.
 
 ## Score record and recovery
 
