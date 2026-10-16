@@ -1597,13 +1597,20 @@ function findLobby(lobbyID, isStaff, message, callback) {
   }
 }
 
-function deleteLobby(doc, message, sendMessage = true, messageDeleted = false, { delayRoomCleanup = false } = {}) {
+function deleteLobby(doc, message, sendMessage = true, messageDeleted = false, { delayRoomCleanup = false, requireScoringComplete = false } = {}) {
   const guild = client.guilds.cache.get(doc.guild);
   return withRoomLock(doc.guild, async () => {
     // Both !l end and messageDelete can arrive for the same lobby. Re-read under
     // the shared lock so an old cleanup can never touch a reassigned room.
     doc = await Lobby.findOne({ _id: doc.id });
     if (!doc) return false;
+    if (requireScoringComplete && doc.started && doc.scoringEnabled) {
+      const scoreBlock = lobbyScoring.endBlockReason(doc);
+      if (scoreBlock) {
+        await message.channel.warn(scoreBlock);
+        return false;
+      }
+    }
     const room = await Room.findOne({ lobby: doc.id, guild: doc.guild });
     const delayCleanup = delayRoomCleanup && doc.started && !messageDeleted;
     const channel = room ? await releaseRoom(guild, room, { delayCleanup }) : null;
@@ -2213,6 +2220,10 @@ module.exports = {
       case 'end':
         // eslint-disable-next-line consistent-return
         findLobby(lobbyID, message.member.isStaff(), message, (doc, msg) => {
+          if (doc.started && doc.scoringEnabled) {
+            const scoreBlock = lobbyScoring.endBlockReason(doc);
+            if (scoreBlock) return message.channel.warn(scoreBlock);
+          }
           if (doc.started) {
             const minutes = diffMinutes(new Date(), doc.startedAt);
             const confirmationMinutes = doc.getLobbyEndCooldown();
@@ -2221,7 +2232,7 @@ module.exports = {
               // eslint-disable-next-line consistent-return
               Room.findOne({ lobby: doc.id }).then((room) => {
                 if (!room) {
-                  return deleteLobby(doc, msg, true, false, { delayRoomCleanup: true });
+                  return deleteLobby(doc, msg, true, false, { delayRoomCleanup: true, requireScoringComplete: true });
                 }
 
                 // eslint-disable-next-line max-len
@@ -2244,7 +2255,7 @@ module.exports = {
                         return roomChannel.error('Command cancelled. Stop abusing staff powers.');
                       }
 
-                      deleteLobby(doc, msg, true, false, { delayRoomCleanup: true });
+                      deleteLobby(doc, msg, true, false, { delayRoomCleanup: true, requireScoringComplete: true });
                     }).catch(() => {
                       voteMessage.channel.error('Command cancelled.');
                     });
@@ -2252,10 +2263,10 @@ module.exports = {
                 }
               });
             } else {
-              deleteLobby(doc, msg, true, false, { delayRoomCleanup: true });
+              deleteLobby(doc, msg, true, false, { delayRoomCleanup: true, requireScoringComplete: true });
             }
           } else {
-            return deleteLobby(doc, msg, true, false, { delayRoomCleanup: true });
+            return deleteLobby(doc, msg, true, false, { delayRoomCleanup: true, requireScoringComplete: true });
           }
         });
         break;

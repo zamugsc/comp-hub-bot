@@ -176,6 +176,16 @@ record; they are not copied to finished-lobby statistics. Failed room cleanup ke
 active record. Posted results follow existing room message-retention behavior. Completing
 scoring does not close the lobby or submit results to ranked leaderboards.
 
+Once High IQ Scoring is enabled, `!l end` requires every configured race or battle
+round to have been saved with **Save scores ✅**. Opening the final panel or filling
+it in is not enough. Incomplete scoring reports the saved count and blocks both
+direct ending and end votes. An unfinished correction or pending score recovery
+also blocks ending. Completion is checked again against the current lobby under
+the shared room lock before any cleanup, so an earlier end vote cannot bypass it.
+Manual-scoring and unstarted lobbies retain their existing end behavior. This check
+does not grant anyone new permissions; staff's existing delete control remains
+available to cancel an abandoned lobby.
+
 ## Validation
 
 Run `node --test tests/lobby-scoring.test.js` for the feature and

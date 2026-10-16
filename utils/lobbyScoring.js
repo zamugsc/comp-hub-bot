@@ -115,6 +115,25 @@ function createLobbyScoring({
     return table;
   }
 
+  function endBlockReason(doc) {
+    if (!doc.started || !doc.scoringEnabled) return null;
+    if (doc.scoringRecoveryId) return 'Restore the scoring backup with the recovery button before ending this lobby.';
+    let completed = 0;
+    try {
+      if (!Number.isSafeInteger(doc.trackCount) || doc.trackCount < 1) throw new Error('Invalid race count.');
+      // The startup template contains zero placeholders for every race. Only a
+      // committed results message proves that any races have actually been saved.
+      if (doc.scoringMessageId) completed = validate(doc, doc.scoringBackup).races;
+    } catch (error) {
+      return 'The saved High IQ Scoring record could not be verified. Use `!l score` to check or recover scores before ending this lobby.';
+    }
+    if (completed !== doc.trackCount) {
+      return `Only ${completed}/${doc.trackCount} ${raceWord(doc)}s have been scored. Complete scoring with \`!l score\` and **Save scores ✅** before ending this lobby.`;
+    }
+    if (doc.scoringPanelId) return 'Finish and save the unfinished scoring entry before ending this lobby. Use `!l score` to continue.';
+    return null;
+  }
+
   async function offerRecovery(doc, channel, error) {
     const content = `${mention(doc.scorekeeperId)} I could not read the saved scores: ${error.message}\n${
       doc.scoringBackup ? 'Scoring is paused. Restore the last database backup below.' : 'Scoring is paused. Ask staff to check the missing template.'}`;
@@ -669,7 +688,7 @@ function createLobbyScoring({
   }
 
   return {
-    initialise, selectScorekeeper, command, changeScorekeeper, handleButton, eligible, setTracks,
+    initialise, selectScorekeeper, command, changeScorekeeper, handleButton, eligible, setTracks, endBlockReason,
   };
 }
 
