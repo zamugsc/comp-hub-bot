@@ -38,31 +38,31 @@ Team player buttons carry the table's matching color marker: Team A 🟦, Team B
 Team C 🟩 and Team D 🟨. Teammates share a marker, derived from the saved team
 list rather than their position in the button grid. FFA names have no team marker.
 These standard emoji need no custom server emoji and remain on disabled buttons.
-The control row reads **Undo last**, **Reset**, **Tie** (or **Tie done**), then
-**Save scores** at the right.
+The control row reads **Undo↩️**, **Reset❌**, **Tie⚖️** (or **Tie done⚖️**), then
+**Save scores✅** at the right.
 The prompt advances from **Select 1st place player** to the last position; eighth
 place specifically uses **Select 8th place 🐢**.
-**Undo last** and **Reset** affect only the unfinished entry. **Save scores** requires
+**Undo↩️** and **Reset❌** affect only the unfinished entry. **Save scores✅** requires
 every player. `!l score edit 3` replaces race/round 3 without changing other columns.
 If an unfinished panel exists, another command links to it instead of creating a
 second entry. The visible finishing order carries the draft across bot restarts.
 
 ## Ties
 
-At a position shared by multiple players, press **Tie**, select all players sharing
-that place, then press **Tie done**. Normal positions still advance after one tap.
+At a position shared by multiple players, press **Tie⚖️**, select all players sharing
+that place, then press **Tie done⚖️**. Normal positions still advance after one tap.
 The player buttons stay in the same rows and each player can appear only once.
-**Save scores** remains disabled until all players are selected and any active tie
+**Save scores✅** remains disabled until all players are selected and any active tie
 is confirmed. FFA allows two through all players to share a position. In team modes,
 each tie group can contain at most one player from each team. Selecting a player
 disables their teammates while the tie is being entered; selecting another team's
 player also disables that player's teammates. The handler rejects teammate picks
 even if a stale or forged button request bypasses the disabled control. Undo and
-Reset restore eligibility, and confirming the tie re-enables unselected players
+Reset❌ restore eligibility, and confirming the tie re-enables unselected players
 for the next position. Tie is disabled when all remaining players share a team.
 Team membership comes from the lobby's saved team list, including on restart;
 missing or invalid team assignments disable tie entry until corrected. Existing
-unfinished same-team ties must be corrected with Undo or Reset before saving.
+unfinished same-team ties must be corrected with Undo or Reset❌ before saving.
 The review displays the same place number beside every
 member of a tie, and the visible panel retains an unfinished tie across restarts.
 
@@ -73,10 +73,10 @@ advance by one place per group: Battle FFA results can be 5, 5, 3, 2 for two tie
 for first, or 5, 5, 5, 3 for three tied for first. The same rule applies to ties
 at any later position and to multiple separate tie groups.
 
-If a player was selected normally before remembering the tie, use **Undo last**,
-then **Tie**. While entering a tie, Undo removes the most recent selection; at an
+If a player was selected normally before remembering the tie, use **Undo↩️**,
+then **Tie⚖️**. While entering a tie, Undo removes the most recent selection; at an
 empty tie it cancels tie entry. Undo on a confirmed tie removes its last player
-and reopens the group for correction. Reset clears the whole unfinished entry.
+and reopens the group for correction. Reset❌ clears the whole unfinished entry.
 Existing unfinished panels from before tie support remain readable.
 
 ## Score record and recovery
