@@ -34,6 +34,10 @@ or server roles are changed by scoring.
 After activation, the bot pings the scorekeeper with instructions. `!l score` opens
 the next race (or battle round) with its saved map name and stationary player buttons,
 two per row. Selected players are disabled and also rejected as duplicates by the handler.
+Team player buttons carry the table's matching color marker: Team A 🟦, Team B 🟥,
+Team C 🟩 and Team D 🟨. Teammates share a marker, derived from the saved team
+list rather than their position in the button grid. FFA names have no team marker.
+These standard emoji need no custom server emoji and remain on disabled buttons.
 The control row reads **Undo last**, **Reset**, **Tie** (or **Tie done**), then
 **Save scores** at the right.
 The prompt advances from **Select 1st place player** to the last position; eighth

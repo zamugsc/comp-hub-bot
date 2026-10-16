@@ -3,6 +3,9 @@ const {
   readTemplate, extractTemplate, scoreRace, rankGroups, ordinal,
 } = require('./scoreTable');
 
+// Same team order as generateTemplate's blue, red, green and yellow colors.
+const teamMarkers = ['🟦', '🟥', '🟩', '🟨'];
+
 // Inject Discord/database boundaries so every flow can be exercised offline.
 function createLobbyScoring({
   Lobby, Room, Player, drawTable, withRoomLock, pointsFor,
@@ -10,9 +13,11 @@ function createLobbyScoring({
 }) {
   const { MessageButton, MessageActionRow } = builders;
   const idOf = (doc) => String(doc.id || doc._id);
-  const button = (id, label, disabled = false, style = 'grey') => new MessageButton()
-    .setID(id).setLabel(label).setStyle(style)
-    .setDisabled(disabled);
+  const button = (id, label, disabled = false, style = 'grey', emoji = null) => {
+    const result = new MessageButton().setID(id).setLabel(label).setStyle(style)
+      .setDisabled(disabled);
+    return emoji ? result.setEmoji(emoji) : result;
+  };
   const row = (...buttons) => new MessageActionRow().addComponents(...buttons);
   const control = (doc, action, suffix = '') => `score:${idOf(doc)}:${action}${suffix ? `:${suffix}` : ''}`;
   const mention = (id) => `<@!${id}>`;
@@ -136,6 +141,7 @@ function createLobbyScoring({
       components.push(row(...doc.scoringRoster.slice(i, i + 2).map((player) => button(
         control(doc, 'pick', player.discordId), player.name.slice(0, 80), order.includes(player.discordId)
           || (state.tie && (teams === null || sameTeam(teams, player.discordId, pending))),
+        'grey', teams && teamMarkers[teams.get(player.discordId)],
       ))));
     }
     components.push(row(button(control(doc, 'undo'), 'Undo last', !order.length && !state.tie),
