@@ -282,6 +282,15 @@ async function discordDraft(channel, mentions, type, bans, picks, options) {
     logMessage.delete();
   }
 
+  if (options.onTracksSelected) {
+    try {
+      await options.onTracksSelected(pickedTracks.map((pick) => pick.track));
+    } catch (error) {
+      // Optional scoring persistence must not discard the completed manual draft.
+      console.error('Could not save drafted tracks for scoring:', error);
+      await channel.warn('Could not save the drafted tracks for button scoring. The draft result is still posted below.');
+    }
+  }
   channel.send({ embed }).then((m) => {
     if (options.pinTrackList) {
       m.pin();

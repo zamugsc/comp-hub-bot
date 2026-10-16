@@ -53,6 +53,8 @@ const compareArrays = require('../utils/compareArrays');
 const generateBattleModes = require('../utils/generateBattleModes');
 const generateTemplate = require('../utils/generateTemplate');
 const generateTracks = require('../utils/generateTracks');
+const { createLobbyScoring } = require('../utils/lobbyScoring');
+const { pointsFor } = require('../db/race_points');
 const getConfigValue = require('../utils/getConfigValue');
 const getLorenziBoardData = require('../utils/getLorenziBoardData');
 const greedyPartition = require('../utils/greedyPartition');
@@ -87,6 +89,8 @@ const resultContainsBannedPlayer = require('../utils/resultContainsBannedPlayer'
 const ucfirst = require('../utils/ucfirst');
 
 const lock = new AsyncLock();
+const lobbyScoring = createLobbyScoring({ Lobby, Room, Player, withRoomLock, pointsFor,
+  drawTable: require('../utils/drawTable') });
 
 const NAT3 = 'NAT 3';
 const FORCE_START_COOLDOWN = 5;
@@ -1388,7 +1392,14 @@ ${playersText}`,
                       description: `\`\`\`${template}\`\`\`
   [Open template on gb.hlorenzi.com](${templateUrl})`,
                     },
-                  }).then(() => {
+                  }).then(async (templateMessage) => {
+                    try {
+                      await lobbyScoring.initialise(doc, roomChannel, templateMessage,
+                        doc.isDrafting() ? [] : tracks.split('\n'));
+                    } catch (error) {
+                      console.error('Could not prepare optional button scoring:', error);
+                      await roomChannel.warn('Button scoring could not be prepared. The existing score template is available for manual scoring.');
+                    }
                     if (doc.isBattle()) {
                       sendBattleModeSettings(doc, roomChannel, modes);
                     }
@@ -1409,17 +1420,23 @@ ${playersText}`,
 
                       m.react('✅');
 
-                      const filter = (r, u) => ['✅'].includes(r.emoji.name) && doc.players.includes(u.id);
+                      let selectedScorekeeper;
+                      const filter = (r, u) => {
+                        if (r.emoji.name !== '✅' || !doc.players.includes(u.id) || u.bot || selectedScorekeeper) return false;
+                        selectedScorekeeper = u.id;
+                        return true;
+                      };
                       const options = { maxUsers: 1, time: 300000, errors: ['time'] };
 
-                      m.awaitReactions(filter, options).then((collected) => {
-                        const reaction = collected.first();
-                        const user = reaction.users.cache.last();
-
-                        m.delete();
-                        roomChannel.success(`<@!${user.id}> has volunteered to do scores. Please make sure you keep the lobby updated about mid-match scores.`);
+                      m.awaitReactions(filter, options).then(async () => {
                         reacted = true;
-                      }).catch(() => {
+                        await lobbyScoring.selectScorekeeper(doc, roomChannel, selectedScorekeeper);
+                        await m.delete();
+                      }).catch((error) => {
+                        if (reacted) {
+                          console.error('Could not announce the selected scorekeeper:', error);
+                          return roomChannel.warn('Could not announce the selected scorekeeper. Ask staff to check the error.');
+                        }
                         // eslint-disable-next-line no-use-before-define
                         deleteLobby(doc, m);
                         m.delete();
@@ -1664,6 +1681,8 @@ module.exports = {
     if (!action) {
       action = 'new';
     }
+
+    if (action.toLowerCase() === 'score') return lobbyScoring.command(message, args.slice(1));
 
     if (action === 'custom') {
       action = 'new';
@@ -2359,7 +2378,8 @@ module.exports = {
                       return roomChannel.error('Command cancelled. Stop abusing staff powers.');
                     }
 
-                    generateTracks(doc).then((tracks) => {
+                    generateTracks(doc).then(async (tracks) => {
+                      await lobbyScoring.setTracks(doc, tracks);
                       const embed = {
                         color: doc.getColor(),
                         title: `New ${doc.isRacing() ? 'Track' : 'Arena'} List`,
@@ -2377,7 +2397,7 @@ module.exports = {
 
                         roomChannel.success(`${doc.isRacing() ? 'Tracks' : 'Arenas'} have been rerolled successfully.`);
                       });
-                    });
+                    }).catch((error) => roomChannel.warn(error.message));
                   }).catch(() => {
                     voteMessage.channel.error('Command cancelled.');
                   });
@@ -3547,3 +3567,5 @@ function checkOldTeams() {
 }
 
 new CronJob('* * * * *', checkOldTeams).start();
+
+client.on('clickButton', (button) => lobbyScoring.handleButton(button));

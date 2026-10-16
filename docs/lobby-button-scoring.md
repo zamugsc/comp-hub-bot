@@ -1,0 +1,83 @@
+# Optional lobby button scoring
+
+The existing startup template and Lorenzi link remain available for manual scoring.
+The first eligible human player accepting the scorekeeper checkmark is persisted on
+the active lobby. Their announcement offers **Enable button scoring** for the full
+default player counts below. Tournaments, survival, 1v1, and reduced or expanded
+rosters retain manual scoring. Tie entry is deferred for every mode.
+
+| Format | Players | Default races/arenas | Points from first to last |
+| --- | --- | --- | --- |
+| FFA | 8 | 8 | 9, 8, 7, 5, 4, 3, 2, 1 |
+| Duos / Itemless Duos / Insta Duos | 8 | 8 | 8, 7, 6, 5, 4, 3, 2, 1 |
+| 3v3 / Insta 3v3 | 6 | 8 | 6, 5, 4, 3, 2, 1 |
+| Itemless 3v3 | 6 | 6 | 6, 5, 4, 3, 2, 1 |
+| 4v4 / Insta 4v4 | 8 | 10 | 10, 8, 6, 5, 4, 3, 2, 1 |
+| Itemless 4v4 | 8 | 8 | 10, 8, 6, 5, 4, 3, 2, 1 |
+| Itemless FFA | 4 | 6 | 5, 3, 2, 1 |
+| Battle FFA | 4 | 5 | 5, 3, 2, 1 |
+| Battle Duos | 4 | 6 | 4, 3, 2, 1 |
+| Battle 3v3 | 6 | 6 | 6, 5, 4, 3, 2, 1 |
+| Battle 4v4 | 8 | 8 | 8, 7, 6, 5, 4, 3, 2, 1 |
+
+Existing lobby defaults are unchanged. The panel uses the actual saved race/arena
+count and ordered map list, including a custom count when configured.
+
+Only that scorekeeper can activate the system, use `!l score`, press entry controls,
+edit past races or restore a backup. Staff privileges do not bypass this restriction.
+All panels and results remain public to members with existing room read access;
+successful button presses are acknowledged silently and rejection messages are private. No channel permissions
+or server roles are changed by scoring.
+
+## Race entry
+
+After activation, the bot pings the scorekeeper with instructions. `!l score` opens
+the next race (or battle round) with its saved map name and stationary player buttons,
+two per row. Selected players are disabled and also rejected as duplicates by the handler.
+The prompt advances from **Select 1st place player** to the last position; eighth
+place specifically uses **Select 8th place 🐢**.
+**Undo last** and **Reset** affect only the unfinished entry. **Save scores** requires
+every player. `!l score edit 3` replaces race/round 3 without changing other columns.
+If an unfinished panel exists, another command links to it instead of creating a
+second entry. The visible finishing order carries the draft across bot restarts.
+
+## Score record and recovery
+
+The zero-filled startup template supplies the roster for the first race. Successful
+saves publish a new message with a code-block template above the existing rendered
+image, then remove the entry panel. New templates contain only completed race columns,
+with no trailing `|`. Every player must have the same number of columns. The bot
+counts columns, not score totals or nonzero values, to choose the next race.
+
+The active lobby stores the latest message ID. Each command reads the actual Discord
+message, bypassing the local message cache, and validates it against the saved roster.
+The database also retains the latest successfully saved template as a recovery copy.
+Missing or malformed messages pause scoring and offer **Restore scores from backup**.
+Only the scorekeeper can confirm; recovery reposts the text and image and updates the
+reference. It never silently uses a backup. Manual edits on Lorenzi are not imported.
+
+Renderer/send/database failures retain the current entry for retry. A failed database
+write after posting may leave an extra result snapshot in chat; it does not append a
+race twice. Old panel buttons are invalid once a race has been committed. A deleted
+unfinished panel cannot recover unsaved picks; the bot explicitly asks for re-entry.
+
+The actual ordered tracks are persisted at startup, on internal track-draft completion,
+and on reroll. Reroll is refused once an activated scoring workflow has an entry or a
+saved race, so tracks cannot change underneath recorded results. External track drafts
+whose selected tracks never return to the bot retain the manual workflow until a track
+list can be integrated; they do not offer activation in this version.
+
+Closing the active lobby deletes its backup and scoring references with the lobby
+record; they are not copied to finished-lobby statistics. Failed room cleanup keeps the
+active record. Posted results follow existing room message-retention behavior. Completing
+scoring does not close the lobby or submit results to ranked leaderboards.
+
+## Validation
+
+Run `node --test tests/lobby-scoring.test.js` for the feature and
+`node --test tests/*.test.js` for the offline regression suite. Discord, rendering and
+database boundaries are mocked; tests never start the bot or connect to MongoDB.
+The existing renderer, flags and fonts are intentionally untouched. Mobile layout,
+live Discord permissions and the deployed OS/native canvas runtime need separate
+validation. The bot uses its existing room access and needs message history, sending,
+embedding and attachment permissions to operate the workflow.

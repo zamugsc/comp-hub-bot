@@ -182,6 +182,18 @@ const Lobby = new Schema({
   channel: String,
   message: String,
   creator: String,
+  // Scores live in the referenced Discord code block; retain only a recovery snapshot here.
+  scorekeeperId: { type: String, default: null },
+  scoringEnabled: { type: Boolean, default: false },
+  scoringChannelId: { type: String, default: null },
+  scoringTemplateMessageId: { type: String, default: null },
+  scoringMessageId: { type: String, default: null },
+  scoringBackup: { type: String, default: null },
+  scoringOfferId: { type: String, default: null },
+  scoringPanelId: { type: String, default: null },
+  scoringRecoveryId: { type: String, default: null },
+  scoringRoster: [{ discordId: String, name: String, prefix: String }],
+  scoringTracks: { type: [String], default: [] },
   started: {
     type: Boolean,
     default: false,
@@ -1145,7 +1157,10 @@ Lobby.methods = {
         enableSpyroCircuit: !bannedTracks.includes(TRACK_SPYRO_CIRCUIT),
         showDraftLog: true,
         pickTimeout: 60,
-        pinTrackList: true
+        pinTrackList: true,
+        onTracksSelected: async (tracks) => {
+          await this.constructor.updateOne({ _id: this._id, started: true }, { $set: { scoringTracks: tracks } });
+        },
       };
 
       switch (this.type) {
