@@ -54,10 +54,30 @@ For supported button-scoring formats, the current scorekeeper can use
 player to take over. Only that player can press
 **Accept scorekeeper duty**, within 60 seconds. The original scorekeeper retains
 control until acceptance; a timeout disables the request and leaves ownership
-unchanged. Only one request can be pending per lobby. Acceptance transfers the
-existing panel, unfinished selections, editing and recovery rights without changing
-scores or enabling High IQ Scoring automatically. Requests are temporary in memory;
-there is no additional database state or restart recovery.
+unchanged.
+
+Other lobby players can use the same command to nominate another human lobby player
+or themselves when the current scorekeeper is unavailable. A nomination starts a
+120-second **✅** reaction vote. Nominating another player requires
+`ceil((player count - 1) * 0.75)` other voters, including the nominee. The requester
+is already counted by issuing the command. Self-nomination requires one fewer
+other voter. For four players these requirements are three and two other voters;
+for eight players they are six and five. Only distinct lobby players' checkmarks
+count; bot reactions, outsiders and the requester's own reaction are excluded.
+Withdrawn votes do not count. The vote stays open until both the threshold and
+the nominee's approval are satisfied, or 120 seconds expire.
+
+Staff recognized by the existing `isStaff()` check can immediately assign any human
+lobby player, even when the staff member is not a participant. The command still
+runs in that lobby's room. Staff assignments cancel pending handoffs and votes;
+other players cannot replace a pending request. There is one pending request per
+lobby. Ownership, roster, room assignment and the deadline are checked again before
+applying a vote. A timeout or cancellation leaves ownership unchanged.
+
+All transfer routes preserve the existing panel, unfinished selections, editing,
+recovery and submission rights without changing scores or enabling High IQ Scoring
+automatically. Requests are temporary in memory; there is no additional database
+state or restart recovery. Server roles and channel permissions are unchanged.
 
 ## Race entry
 
