@@ -2,9 +2,8 @@
 
 The existing startup template and Lorenzi link remain available for manual scoring.
 The first eligible human player accepting the scorekeeper checkmark is persisted on
-the active lobby. Their announcement offers **Enable High IQ scoring** for the full
-default player counts below. Tournaments, survival, 1v1, and reduced or expanded
-rosters retain manual scoring.
+the active lobby. Their announcement offers **Enable High IQ scoring** for supported
+player counts. Tournaments, survival and 1v1 retain manual scoring. Default formats:
 
 | Format | Players | Default races/arenas | Points from first to last |
 | --- | --- | --- | --- |
@@ -19,6 +18,21 @@ rosters retain manual scoring.
 | Battle Duos | 4 | 6 | 4, 3, 2, 1 |
 | Battle 3v3 | 6 | 6 | 6, 5, 4, 3, 2, 1 |
 | Battle 4v4 | 8 | 8 | 8, 7, 6, 5, 4, 3, 2, 1 |
+
+FFA, Itemless FFA and Battle FFA use the same scaling for the actual started roster:
+
+| Players | Points from first to last |
+| --- | --- |
+| 4 | 5, 3, 2, 1 |
+| 5 | 6, 5, 3, 2, 1 |
+| 6 | 7, 6, 5, 3, 2, 1 |
+| 7 | 8, 7, 6, 4, 3, 2, 1 |
+| 8 | 9, 8, 7, 5, 4, 3, 2, 1 |
+
+All Duos formats (normal, Itemless, Insta and Battle) use balanced N-to-1 points
+for complete rosters of 4, 6 or 8 players. 3v3 and 4v4 retain their configured
+six- and eight-player scoring. The scorer supports these known point maps without
+changing which sizes the existing lobby creation and start commands permit.
 
 Existing lobby defaults are unchanged. The panel uses the actual saved race/arena
 count and ordered map list, including a custom count when configured.

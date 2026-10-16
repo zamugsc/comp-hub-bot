@@ -19,8 +19,8 @@ function readTemplate(text, roster = null, initial = false) {
     });
   });
   const count = roster ? roster.length : rows.length;
-  if (![4, 6, 8].includes(count) || rows.length !== count || new Set(rows.map((row) => row.prefix)).size !== count) {
-    throw new Error('The table must contain every player exactly once (four, six or eight players).');
+  if (count < 4 || count > 8 || rows.length !== count || new Set(rows.map((row) => row.prefix)).size !== count) {
+    throw new Error('The table must contain every player exactly once (four to eight players).');
   }
   if (roster && (roster.length !== rows.length
     || rows.some((row) => !roster.some((player) => player.prefix === row.prefix)))) {

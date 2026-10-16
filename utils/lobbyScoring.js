@@ -29,7 +29,8 @@ function createLobbyScoring({
   const externalDraft = (doc) => doc.trackOption === 'draft'
     && !['race_ffa', 'race_duos', 'race_itemless_ffa', 'race_itemless_duos'].includes(doc.type);
   const eligible = (doc) => doc.mode !== 'tournament' && doc.type !== 'race_survival'
-    && !externalDraft(doc) && Boolean(pointsFor(doc.type)) && doc.players.length === pointsFor(doc.type).length;
+    && !externalDraft(doc) && Boolean(pointsFor(doc.type, doc.players.length))
+    && doc.players.length === pointsFor(doc.type, doc.players.length).length;
 
   function teamAssignments(doc) {
     const teams = new Map();
@@ -407,7 +408,7 @@ function createLobbyScoring({
       validateTieTeams(teams, state.groups);
       const table = await loadTable(doc, channel);
       if (!table) return 'Scoring is paused. Check the recovery message in the room.';
-      const text = scoreRace(table, doc.scoringRoster, state.groups, state.race, pointsFor(doc.type), isBattle(doc));
+      const text = scoreRace(table, doc.scoringRoster, state.groups, state.race, pointsFor(doc.type, doc.players.length), isBattle(doc));
       const completed = Math.max(table.races, state.race);
       const posted = await postResults(doc, channel, text,
         `✅ ${raceTitle(doc)} ${state.race} saved — ${doc.scoringTracks[state.race - 1]}. ${completed} / ${doc.trackCount} ${raceWord(doc)}s scored.${
