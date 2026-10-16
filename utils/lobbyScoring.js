@@ -11,10 +11,13 @@ function createLobbyScoring({
   Lobby, Room, Player, drawTable, withRoomLock, pointsFor,
   builders = defaultBuilders, log = console.error,
   now = Date.now, setTimer = setTimeout, clearTimer = clearTimeout,
+  getSubmissionChannel = () => null, resultContainsBannedPlayer,
 }) {
   const { MessageButton, MessageActionRow } = builders;
   const scorekeeperChanges = new Map();
   const penaltyHistory = new Map();
+  const submissionOffers = new Map();
+  const sentSubmissions = new Map();
   const idOf = (doc) => String(doc.id || doc._id);
   const button = (id, label, disabled = false, style = 'grey', emoji = null) => {
     const result = new MessageButton().setID(id).setLabel(label).setStyle(style)
@@ -346,6 +349,95 @@ function createLobbyScoring({
     });
   }
 
+  const submissionButtons = (doc, disabled = false) => [row(
+    button(control(doc, 'submit'), 'Submit scores', disabled, 'green'),
+    button(control(doc, 'submitmanual'), "I'll do it myself", disabled),
+  )];
+  const submissionLink = (doc, record) => `https://discord.com/channels/${doc.guild}/${record.channelId}/${record.messageId}`;
+  const submittedResult = (doc) => sentSubmissions.get(idOf(doc)) || (doc.scoringSubmissionMessageId ? {
+    messageId: doc.scoringSubmissionMessageId, channelId: doc.scoringSubmissionChannelId, sourceId: doc.scoringSubmissionSourceId,
+  } : null);
+
+  async function closeSubmissionOffer(doc, content) {
+    const offer = submissionOffers.get(idOf(doc));
+    if (!offer || offer.closed) return;
+    offer.closed = true;
+    await offer.message.edit({ content, components: submissionButtons(doc, true), allowedMentions: { parse: [] } })
+      .catch((error) => log('Could not update the score submission prompt:', error));
+  }
+
+  async function offerSubmission(doc, channel) {
+    if (!doc.ranked || !doc.scoringEnabled || endBlockReason(doc)) return;
+    const submitted = submittedResult(doc);
+    if (submitted) {
+      await channel.send(`${submitted.sourceId !== doc.scoringMessageId
+        ? 'Scores were re-saved after submission. Check the existing submission with staff:' : 'Scores already submitted:'} ${submissionLink(doc, submitted)}`);
+      return;
+    }
+    const previous = submissionOffers.get(idOf(doc));
+    if (previous && previous.sourceId === doc.scoringMessageId) return;
+    await closeSubmissionOffer(doc, 'The saved scores changed. Use the latest submission prompt.');
+    const destination = await getSubmissionChannel(doc.guild);
+    if (!destination) throw new Error('The configured results-submissions channel could not be found.');
+    const message = await channel.send({
+      content: `Submit finished scores to <#${destination.id}> ?`,
+      components: submissionButtons(doc), allowedMentions: { parse: [] },
+    });
+    submissionOffers.set(idOf(doc), { message, sourceId: doc.scoringMessageId, channelId: destination.id, closed: false });
+  }
+
+  async function tryOfferSubmission(doc, channel) {
+    try { await offerSubmission(doc, channel); } catch (error) {
+      log('Could not offer score submission:', error);
+      await channel.send(`Scores are saved, but automatic submission is unavailable: ${error.message} Submit them manually or retry with \`!l score\`.`).catch(log);
+    }
+  }
+
+  async function submitScores(doc, channel, messageId, manual) {
+    if (!doc.ranked) throw new Error('Automatic submission is only available for ranked lobbies using High IQ Scoring.');
+    const offer = submissionOffers.get(idOf(doc));
+    if (!offer || offer.message.id !== messageId || offer.closed || offer.sourceId !== doc.scoringMessageId) {
+      throw new Error('This score submission prompt is no longer current. Use `!l score` to continue.');
+    }
+    const blocked = endBlockReason(doc);
+    if (blocked) throw new Error(blocked);
+    if (manual) {
+      await closeSubmissionOffer(doc, `Submit the finished scores yourself to <#${offer.channelId}>.`);
+      return;
+    }
+    const existing = submittedResult(doc);
+    if (existing) {
+      await closeSubmissionOffer(doc, `Scores already submitted: ${submissionLink(doc, existing)}`);
+      return;
+    }
+    const destination = await getSubmissionChannel(doc.guild);
+    if (!destination || destination.id !== offer.channelId) throw new Error('The results-submissions channel is unavailable. Submit scores manually or ask staff to check the channel.');
+    const table = await loadTable(doc, channel);
+    if (!table) throw new Error('Restore the scoring backup before submitting scores.');
+    if (table.races !== doc.trackCount) throw new Error('Save every race or round before submitting scores.');
+    const text = table.lines.join('\n');
+    if (typeof resultContainsBannedPlayer !== 'function') throw new Error('Submission validation is unavailable. Ask staff to check the bot.');
+    if (await resultContainsBannedPlayer(text)) throw new Error('This score table contains a player banned from ranked lobbies. It cannot be submitted.');
+    const posted = await destination.send({
+      content: `${mention(doc.scorekeeperId)}\n\`\`\`\n${text}\n\`\`\``,
+      allowedMentions: { parse: [], users: [doc.scorekeeperId] },
+    });
+    const record = { messageId: posted.id, channelId: destination.id, sourceId: doc.scoringMessageId };
+    // A successful send must not be repeated if recording its reference fails.
+    sentSubmissions.set(idOf(doc), record);
+    try {
+      await update(doc, { scoringSubmissionMessageId: record.messageId,
+        scoringSubmissionChannelId: record.channelId, scoringSubmissionSourceId: record.sourceId });
+      sentSubmissions.delete(idOf(doc));
+    } catch (error) { log('Scores were submitted, but their message reference could not be saved:', error); }
+    await closeSubmissionOffer(doc, `Scores submitted: ${submissionLink(doc, record)}`);
+  }
+
+  function forgetSubmission(doc) {
+    submissionOffers.delete(idOf(doc));
+    sentSubmissions.delete(idOf(doc));
+  }
+
   async function initialise(doc, channel, templateMessage, tracks, battleModes = []) {
     if (!eligible(doc)) return;
     const text = extractTemplate(templateMessage);
@@ -415,7 +507,10 @@ function createLobbyScoring({
     if (!table) return null;
     const race = args.length ? Number(args[1]) : table.races + 1;
     if (args.length && race > table.races) throw new Error('That race has not been scored yet.');
-    if (race > doc.trackCount) return channel.send(`All ${doc.trackCount} ${raceWord(doc)}s are scored. Use \`!l score edit 3\` to make a correction.`);
+    if (race > doc.trackCount) {
+      await channel.send(`All ${doc.trackCount} ${raceWord(doc)}s are scored. Use \`!l score edit 3\` to make a correction.`);
+      return tryOfferSubmission(doc, channel);
+    }
     if (!doc.scoringTracks[race - 1] || ['-', '*N/A*'].includes(doc.scoringTracks[race - 1])) {
       throw new Error('The track/arena list is not ready. Finish drafting before scoring.');
     }
@@ -425,6 +520,7 @@ function createLobbyScoring({
     penaltyHistory.delete(idOf(doc));
     const panel = await channel.send(panelPayload(doc, state));
     await update(doc, { scoringPanelId: panel.id });
+    await closeSubmissionOffer(doc, 'Scores are being corrected. Save the correction before submitting.');
     return panel;
   }
 
@@ -544,6 +640,7 @@ function createLobbyScoring({
     await update(doc, values);
     penaltyHistory.delete(idOf(doc));
     await deletePanel(doc, channel, oldPanel);
+    await tryOfferSubmission(doc, channel);
     return 'Backup restored. Run `!l score` to continue.';
   }
 
@@ -642,6 +739,7 @@ function createLobbyScoring({
       });
       penaltyHistory.delete(idOf(doc));
       await deletePanel(doc, channel, panel.id);
+      if (completed === doc.trackCount) await tryOfferSubmission(doc, channel);
       return 'Scores saved.';
     } else throw new Error('Unknown scoring action.');
     await panel.edit(panelPayload(doc, state, history));
@@ -663,6 +761,7 @@ function createLobbyScoring({
         async (doc) => {
           if (match[2] === 'activate') return activate(doc, channel, interaction.message.id);
           if (match[2] === 'restore') return restore(doc, channel, interaction.message.id);
+          if (['submit', 'submitmanual'].includes(match[2])) return submitScores(doc, channel, interaction.message.id, match[2] === 'submitmanual');
           return editPanel(doc, channel, interaction.message.id, match[2], match[3]);
         }, match[2] !== 'activate', acknowledged);
     } catch (error) {
@@ -688,7 +787,7 @@ function createLobbyScoring({
   }
 
   return {
-    initialise, selectScorekeeper, command, changeScorekeeper, handleButton, eligible, setTracks, endBlockReason,
+    initialise, selectScorekeeper, command, changeScorekeeper, handleButton, eligible, setTracks, endBlockReason, forgetSubmission,
   };
 }
 

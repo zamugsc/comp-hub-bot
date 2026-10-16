@@ -90,6 +90,9 @@ const ucfirst = require('../utils/ucfirst');
 
 const lock = new AsyncLock();
 const lobbyScoring = createLobbyScoring({ Lobby, Room, Player, withRoomLock, pointsFor,
+  resultContainsBannedPlayer,
+  getSubmissionChannel: (guildId) => client.guilds.cache.get(guildId).channels.cache.find((channel) => channel.type === 'text'
+    && channel.name.toLowerCase() === config.channels.ranked_results_submissions_channel.toLowerCase()),
   drawTable: require('../utils/drawTable') });
 
 const NAT3 = 'NAT 3';
@@ -1643,6 +1646,7 @@ function deleteLobby(doc, message, sendMessage = true, messageDeleted = false, {
     // Remove the record before the Discord message, so our own messageDelete
     // event does not initiate a second cleanup or archive the lobby twice.
     await doc.delete();
+    if (doc.scoringEnabled) lobbyScoring.forgetSubmission(doc);
     if (!messageDeleted) {
       const lobbiesChannel = guild.channels.cache.get(doc.channel);
       if (lobbiesChannel) {

@@ -186,6 +186,31 @@ Manual-scoring and unstarted lobbies retain their existing end behavior. This ch
 does not grant anyone new permissions; staff's existing delete control remains
 available to cancel an abandoned lobby.
 
+## Optional ranked submission
+
+After the final race or battle round is saved, ranked High IQ Scoring lobbies offer
+`Submit finished scores to #results-submissions ?`, using a clickable channel mention
+for the configured results channel. The buttons are **Submit scores** and
+**I'll do it myself**. Only the current scorekeeper can answer, including an accepted
+replacement. Unranked and manual-scoring lobbies do not receive this prompt.
+
+Confirmation reads and validates the current saved table, runs the existing ranked
+ban check, then posts only the scorekeeper mention, a newline, and the text table
+inside one triple-backtick code block. There is no comma after the mention, image,
+automatic approval reaction or leaderboard update. Only the scorekeeper may be pinged.
+Success disables the prompt and links to the submitted message. Repeated clicks
+cannot create another submission. The active lobby retains its destination message,
+channel and source-score message references.
+
+Choosing **I'll do it myself** closes the prompt and leaves submission manual.
+Submission is optional for `!l end`. Correcting scores invalidates an unanswered
+prompt; saving the correction offers a fresh prompt if results have not been posted.
+After submission, further saves point to the existing post for manual follow-up
+with staff, without silently editing it or creating another post. A failed send
+keeps scores saved and permits retry; `!l score` can retry creating a missing prompt.
+The bot uses its existing access to the configured channel; no server permissions
+are changed. The table renderer is unchanged.
+
 ## Validation
 
 Run `node --test tests/lobby-scoring.test.js` for the feature and
