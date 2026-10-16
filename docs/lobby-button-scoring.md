@@ -48,6 +48,13 @@ or server roles are changed by scoring.
 After activation, the bot pings the scorekeeper with instructions. `!l score` opens
 the next race (or battle round) with its saved map name and stationary player buttons,
 two per row. Selected players are disabled and also rejected as duplicates by the handler.
+Battle titles include the announced arena and game mode, for example
+**Battle 1/5 — Skull Rock — Balanced LKD**. The ordered mode list is saved with
+the arena list; Last Kart Driving is abbreviated to LKD for display. Resuming or
+correcting a round retains that round's assigned mode. For older active lobbies,
+the bot can recover one unambiguous matching schedule from its pinned start message.
+If the schedule is missing or ambiguous, the title says **Mode unavailable** and
+scoring still works; the bot never generates a replacement mode list.
 Team player buttons carry the table's matching color marker: Team A 🟦, Team B 🟥,
 Team C 🟩 and Team D 🟨. Teammates share a marker, derived from the saved team
 list rather than their position in the button grid. FFA names have no team marker.

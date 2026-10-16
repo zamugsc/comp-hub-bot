@@ -25,7 +25,13 @@ function createLobbyScoring({
   const sourceId = (doc) => doc.scoringMessageId || doc.scoringTemplateMessageId;
   const isBattle = (doc) => doc.type.startsWith('battle');
   const raceWord = (doc) => (isBattle(doc) ? 'round' : 'race');
-  const raceTitle = (doc) => (isBattle(doc) ? 'Round' : 'Race');
+  const raceTitle = (doc) => (isBattle(doc) ? 'Battle' : 'Race');
+  const mapLabel = (doc, race) => {
+    const arena = doc.scoringTracks[race - 1];
+    if (!isBattle(doc)) return arena;
+    const mode = (doc.scoringBattleModes || [])[race - 1];
+    return `${arena} — ${mode ? mode.replace(/Last Kart Driving/g, 'LKD') : 'Mode unavailable'}`;
+  };
   const externalDraft = (doc) => doc.trackOption === 'draft'
     && !['race_ffa', 'race_duos', 'race_itemless_ffa', 'race_itemless_duos'].includes(doc.type);
   const eligible = (doc) => doc.mode !== 'tournament' && doc.type !== 'race_survival'
@@ -122,6 +128,33 @@ function createLobbyScoring({
     }
   }
 
+  async function recoverBattleModes(doc, channel) {
+    if (!isBattle(doc)) return;
+    if (doc.scoringBattleModes && doc.scoringBattleModes.length === doc.scoringTracks.length
+      && doc.scoringBattleModes.every((mode) => mode && mode.trim())) return;
+    try {
+      // Older active lobbies still have the actual announced schedule in their pinned start message.
+      const pinned = await channel.messages.fetchPinned();
+      const candidates = [];
+      const starts = Array.from(pinned.values()).filter((message) => message.author.id === channel.client.user.id
+        && (!doc.startedAt || message.createdTimestamp >= new Date(doc.startedAt).getTime()));
+      for (const message of starts) {
+        for (const embed of message.embeds || []) {
+          const fields = embed.fields || [];
+          const arenas = fields.find((field) => field.name === 'Arenas');
+          const modes = fields.find((field) => field.name === 'Modes');
+          if (arenas && modes && arenas.value.replace(/\r/g, '').trim() === doc.scoringTracks.join('\n')) {
+            const names = modes.value.replace(/\r/g, '').trim().split('\n');
+            if (names.length === doc.scoringTracks.length && names.every((name) => name.trim())) candidates.push(names);
+          }
+        }
+      }
+      if (candidates.length === 1) await update(doc, { scoringBattleModes: candidates[0] });
+    } catch (error) {
+      log('Could not recover the announced battle mode list:', error);
+    }
+  }
+
   function panelPayload(doc, state) {
     const count = doc.scoringRoster.length;
     const order = state.groups.flat();
@@ -155,7 +188,8 @@ function createLobbyScoring({
       allowedMentions: { parse: [] },
       components,
       embed: {
-        title: `${raceTitle(doc)} ${state.race} / ${doc.trackCount} — ${doc.scoringTracks[state.race - 1]}`,
+        title: isBattle(doc) ? `Battle ${state.race}/${doc.trackCount} — ${mapLabel(doc, state.race)}`
+          : `Race ${state.race} / ${doc.trackCount} — ${mapLabel(doc, state.race)}`,
         description: `${prompt}\n[Previous scores](${url(doc, state.source)})`,
         fields: [{
           name: 'Finishing order',
@@ -170,7 +204,7 @@ function createLobbyScoring({
 
   function readPanel(doc, message) {
     const embed = (message.embeds || [])[0];
-    const race = embed && embed.title.match(/^(?:Race|Round) (\d+) \/ \d+ — /);
+    const race = embed && embed.title.match(/^(?:Race|Round|Battle) (\d+)\s*\/\s*\d+ — /);
     const source = embed && embed.description.match(/\[Previous scores\]\(https:\/\/discord.com\/channels\/[^/]+\/[^/]+\/([^/)]+)\)/);
     if (!race || !source || Number(race[1]) < 1 || Number(race[1]) > doc.trackCount) {
       throw new Error('The unfinished scoring panel could not be read.');
@@ -242,7 +276,7 @@ function createLobbyScoring({
     });
   }
 
-  async function initialise(doc, channel, templateMessage, tracks) {
+  async function initialise(doc, channel, templateMessage, tracks, battleModes = []) {
     if (!eligible(doc)) return;
     const text = extractTemplate(templateMessage);
     const table = readTemplate(text, null, true);
@@ -263,6 +297,7 @@ function createLobbyScoring({
       scoringTemplateMessageId: templateMessage.id,
       scoringRoster: roster,
       scoringTracks: tracks,
+      scoringBattleModes: isBattle(doc) ? battleModes : [],
       scoringBackup: text,
     });
   }
@@ -292,6 +327,7 @@ function createLobbyScoring({
     if (args.length && (args.length !== 2 || args[0] !== 'edit' || !/^[1-9]\d*$/.test(args[1]))) {
       throw new Error('Use `!l score` or `!l score edit 3`.');
     }
+    await recoverBattleModes(doc, channel);
     if (doc.scoringPanelId) {
       try {
         const panel = await fetchMessage(doc, channel, doc.scoringPanelId);
@@ -411,7 +447,7 @@ function createLobbyScoring({
       const text = scoreRace(table, doc.scoringRoster, state.groups, state.race, pointsFor(doc.type, doc.players.length), isBattle(doc));
       const completed = Math.max(table.races, state.race);
       const posted = await postResults(doc, channel, text,
-        `✅ ${raceTitle(doc)} ${state.race} saved — ${doc.scoringTracks[state.race - 1]}. ${completed} / ${doc.trackCount} ${raceWord(doc)}s scored.${
+        `✅ ${raceTitle(doc)} ${state.race} saved — ${mapLabel(doc, state.race)}. ${completed} / ${doc.trackCount} ${raceWord(doc)}s scored.${
           completed === doc.trackCount ? `\nAll ${raceWord(doc)}s scored. Double-check the final scores before submitting.` : ''}`);
       await update(doc, {
         scoringMessageId: posted.id, scoringBackup: text, scoringPanelId: null, scoringRecoveryId: null,

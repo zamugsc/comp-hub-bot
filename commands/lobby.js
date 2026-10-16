@@ -1395,7 +1395,7 @@ ${playersText}`,
                   }).then(async (templateMessage) => {
                     try {
                       await lobbyScoring.initialise(doc, roomChannel, templateMessage,
-                        doc.isDrafting() ? [] : tracks.split('\n'));
+                        doc.isDrafting() ? [] : tracks.split('\n'), modes);
                     } catch (error) {
                       console.error('Could not prepare optional button scoring:', error);
                       await roomChannel.warn('Button scoring could not be prepared. The existing score template is available for manual scoring.');

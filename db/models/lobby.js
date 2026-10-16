@@ -194,6 +194,7 @@ const Lobby = new Schema({
   scoringRecoveryId: { type: String, default: null },
   scoringRoster: [{ discordId: String, name: String, prefix: String }],
   scoringTracks: { type: [String], default: [] },
+  scoringBattleModes: { type: [String], default: [] },
   started: {
     type: Boolean,
     default: false,
