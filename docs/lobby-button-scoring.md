@@ -4,7 +4,7 @@ The existing startup template and Lorenzi link remain available for manual scori
 The first eligible human player accepting the scorekeeper checkmark is persisted on
 the active lobby. Their announcement offers **Enable button scoring** for the full
 default player counts below. Tournaments, survival, 1v1, and reduced or expanded
-rosters retain manual scoring. Tie entry is deferred for every mode.
+rosters retain manual scoring.
 
 | Format | Players | Default races/arenas | Points from first to last |
 | --- | --- | --- | --- |
@@ -40,6 +40,29 @@ place specifically uses **Select 8th place 🐢**.
 every player. `!l score edit 3` replaces race/round 3 without changing other columns.
 If an unfinished panel exists, another command links to it instead of creating a
 second entry. The visible finishing order carries the draft across bot restarts.
+
+## Ties
+
+At a position shared by multiple players, press **Tie**, select all players sharing
+that place, then press **Done tie**. Normal positions still advance after one tap.
+The player buttons stay in the same rows and each player can appear only once.
+**Save scores** remains disabled until all players are selected and any active tie
+is confirmed. Two through all players can share a position, including an eight-way
+battle tie at first place. The review displays the same place number beside every
+member of a tie, and the visible panel retains an unfinished tie across restarts.
+
+Every tied player receives the full points for their shared position. Racing,
+itemless and Insta formats skip the places occupied by the tie: two tied for first
+in regular FFA receive 9 each, followed by third place receiving 7. Battle formats
+advance by one place per group: Battle FFA results can be 5, 5, 3, 2 for two tied
+for first, or 5, 5, 5, 3 for three tied for first. The same rule applies to ties
+at any later position and to multiple separate tie groups.
+
+If a player was selected normally before remembering the tie, use **Undo last**,
+then **Tie**. While entering a tie, Undo removes the most recent selection; at an
+empty tie it cancels tie entry. Undo on a confirmed tie removes its last player
+and reopens the group for correction. Reset clears the whole unfinished entry.
+Existing unfinished panels from before tie support remain readable.
 
 ## Score record and recovery
 

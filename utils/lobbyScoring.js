@@ -1,6 +1,6 @@
 const defaultBuilders = require('discord-buttons');
 const {
-  readTemplate, extractTemplate, scoreRace, ordinal,
+  readTemplate, extractTemplate, scoreRace, rankGroups, ordinal,
 } = require('./scoreTable');
 
 // Inject Discord/database boundaries so every flow can be exercised offline.
@@ -88,18 +88,24 @@ function createLobbyScoring({
 
   function panelPayload(doc, state) {
     const count = doc.scoringRoster.length;
-    const next = state.order.length + 1;
+    const order = state.groups.flat();
+    const ranked = rankGroups(state.groups, isBattle(doc));
+    let next = isBattle(doc) ? state.groups.length + 1 : order.length + 1;
+    if (state.tie) next = ranked[ranked.length - 1].place;
     let prompt = 'Double-check the finishing order, then press **Save scores**.';
-    if (next <= count) prompt = next === 8 ? 'Select 8th place 🐢' : `Select ${ordinal(next)} place player`;
+    if (state.tie) prompt = `Select players tied for ${ordinal(next)} place.\nPress **Done tie** after selecting at least two players.`;
+    else if (order.length < count) prompt = next === 8 ? 'Select 8th place 🐢' : `Select ${ordinal(next)} place player`;
     const components = [];
     for (let i = 0; i < count; i += 2) {
       components.push(row(...doc.scoringRoster.slice(i, i + 2).map((player) => button(
-        control(doc, 'pick', player.discordId), player.name.slice(0, 80), state.order.includes(player.discordId),
+        control(doc, 'pick', player.discordId), player.name.slice(0, 80), order.includes(player.discordId),
       ))));
     }
-    components.push(row(button(control(doc, 'undo'), 'Undo last', !state.order.length),
-      button(control(doc, 'reset'), 'Reset', !state.order.length),
-      button(control(doc, 'save'), 'Save scores', state.order.length !== count, 'green')));
+    components.push(row(button(control(doc, 'undo'), 'Undo last', !order.length && !state.tie),
+      button(control(doc, 'reset'), 'Reset', !order.length && !state.tie),
+      button(control(doc, 'save'), 'Save scores', order.length !== count || state.tie, 'green'),
+      state.tie ? button(control(doc, 'done'), 'Done tie', state.groups[state.groups.length - 1].length < 2)
+        : button(control(doc, 'tie'), 'Tie', count - order.length < 2)));
     return {
       content: '',
       allowedMentions: { parse: [] },
@@ -109,10 +115,10 @@ function createLobbyScoring({
         description: `${prompt}\n[Previous scores](${url(doc, state.source)})`,
         fields: [{
           name: 'Finishing order',
-          value: state.order.length ? state.order.map((id, i) => {
+          value: order.length ? ranked.flatMap(({ place, players }) => players.map((id) => {
             const player = doc.scoringRoster.find((entry) => entry.discordId === id);
-            return `${i + 1}. ${player.name} ${mention(id)}`;
-          }).join('\n') : 'No players selected yet.',
+            return `${place}. ${player.name} ${mention(id)}`;
+          })).join('\n') : 'No players selected yet.',
         }],
       },
     };
@@ -129,7 +135,7 @@ function createLobbyScoring({
     if (!field) throw new Error('The unfinished scoring selections are missing.');
     const lines = field.value === 'No players selected yet.' ? [] : field.value.split('\n');
     const selected = lines.map((line) => line.match(/^(\d+)\. .* <@!?(\d+)>$/));
-    if (selected.some((match, index) => !match || Number(match[1]) !== index + 1)) {
+    if (selected.some((match) => !match)) {
       throw new Error('The unfinished scoring selections are invalid.');
     }
     const order = selected.map((match) => match[2]);
@@ -137,7 +143,36 @@ function createLobbyScoring({
       || order.some((id) => !doc.scoringRoster.some((player) => player.discordId === id))) {
       throw new Error('The unfinished scoring selections are invalid.');
     }
-    return { race: Number(race[1]), source: source[1], order };
+    const groups = [];
+    let currentPlace = 0;
+    let nextPlace = 1;
+    for (const match of selected) {
+      const place = Number(match[1]);
+      if (!Number.isSafeInteger(place) || place < 1 || place > doc.scoringRoster.length) {
+        throw new Error('The unfinished scoring positions are invalid.');
+      }
+      if (place !== currentPlace) {
+        if (place !== nextPlace) throw new Error('The unfinished scoring positions are invalid.');
+        groups.push([]);
+        currentPlace = place;
+        if (isBattle(doc)) nextPlace += 1;
+      }
+      groups[groups.length - 1].push(match[2]);
+      if (!isBattle(doc)) nextPlace += 1;
+    }
+    const tiePrompt = embed.description.match(/^Select players tied for (\d+)(?:st|nd|rd|th) place\./);
+    if (!tiePrompt && embed.description.startsWith('Select players tied for ')) {
+      throw new Error('The unfinished tie position is invalid.');
+    }
+    if (tiePrompt) {
+      const place = Number(tiePrompt[1]);
+      if (place < 1 || place > doc.scoringRoster.length) throw new Error('The unfinished tie position is invalid.');
+      if (place === nextPlace && order.length <= doc.scoringRoster.length - 2) groups.push([]);
+      else if (place !== currentPlace) throw new Error('The unfinished tie position is invalid.');
+    }
+    return {
+      race: Number(race[1]), source: source[1], groups, tie: Boolean(tiePrompt),
+    };
   }
 
   async function deletePanel(doc, channel, panelId) {
@@ -216,7 +251,9 @@ function createLobbyScoring({
     if (doc.scoringPanelId) {
       try {
         const panel = await fetchMessage(doc, channel, doc.scoringPanelId);
-        readPanel(doc, panel);
+        const state = readPanel(doc, panel);
+        // Refresh controls too, so pre-tie panels expose Tie immediately on resume.
+        await panel.edit(panelPayload(doc, state));
         return channel.send(`Continue your unfinished entry: ${url(doc, panel.id)}`);
       } catch (error) {
         if (error.code !== 10008) throw error;
@@ -232,7 +269,9 @@ function createLobbyScoring({
     if (!doc.scoringTracks[race - 1] || ['-', '*N/A*'].includes(doc.scoringTracks[race - 1])) {
       throw new Error('The track/arena list is not ready. Finish drafting before scoring.');
     }
-    const state = { race, source: sourceId(doc), order: [] };
+    const state = {
+      race, source: sourceId(doc), groups: [], tie: false,
+    };
     const panel = await channel.send(panelPayload(doc, state));
     await update(doc, { scoringPanelId: panel.id });
     return panel;
@@ -258,7 +297,8 @@ function createLobbyScoring({
     await announcement.edit({ components: [row(button(control(doc, 'activate'), 'Button scoring enabled', true))] });
     await channel.send({
       content: `${mention(doc.scorekeeperId)} HIGH IQ scoring enabled! Type \`!l score\` to start scoring the first ${raceWord(doc)}. `
-      + `Tap players in finishing order, double-check, then press **Save scores**. Run \`!l score\` again after each ${raceWord(doc)}.`,
+      + `Tap players in finishing order, double-check, then press **Save scores**. Run \`!l score\` again after each ${raceWord(doc)}. `
+      + 'For a tie, press **Tie** before selecting those players, then press **Done tie**.',
       allowedMentions: { users: [doc.scorekeeperId] },
     });
     return 'Button scoring enabled.';
@@ -281,17 +321,40 @@ function createLobbyScoring({
     if (doc.scoringPanelId !== messageId) throw new Error('This panel is no longer active. Run `!l score` to continue.');
     const panel = await fetchMessage(doc, channel, messageId);
     const state = readPanel(doc, panel);
+    const order = state.groups.flat();
     if (state.source !== sourceId(doc)) throw new Error('The saved scores changed. Reopen the scoring entry before continuing.');
     if (action === 'pick') {
       if (!doc.scoringRoster.some((player) => player.discordId === playerId)) throw new Error('Invalid player.');
-      if (state.order.includes(playerId)) return 'That player is already selected.';
-      state.order.push(playerId);
-    } else if (action === 'undo') state.order.pop();
-    else if (action === 'reset') state.order = [];
-    else if (action === 'save') {
+      if (order.includes(playerId)) return 'That player is already selected.';
+      if (state.tie) state.groups[state.groups.length - 1].push(playerId);
+      else state.groups.push([playerId]);
+    } else if (action === 'tie') {
+      if (state.tie) return 'Tie entry is already active.';
+      if (doc.scoringRoster.length - order.length < 2) throw new Error('A tie needs at least two remaining players.');
+      state.groups.push([]);
+      state.tie = true;
+    } else if (action === 'done') {
+      if (!state.tie) throw new Error('There is no unfinished tie.');
+      if (state.groups[state.groups.length - 1].length < 2) throw new Error('Select at least two players before pressing Done tie.');
+      state.tie = false;
+    } else if (action === 'undo') {
+      const last = state.groups[state.groups.length - 1];
+      if (state.tie && last.length) last.pop();
+      else if (state.tie || (last && last.length === 1)) {
+        state.groups.pop();
+        state.tie = false;
+      } else if (last) {
+        last.pop();
+        state.tie = true;
+      }
+    } else if (action === 'reset') {
+      state.groups = [];
+      state.tie = false;
+    } else if (action === 'save') {
+      if (state.tie) throw new Error('Press Done tie to confirm the tied players before saving scores.');
       const table = await loadTable(doc, channel);
       if (!table) return 'Scoring is paused. Check the recovery message in the room.';
-      const text = scoreRace(table, doc.scoringRoster, state.order, state.race, pointsFor(doc.type));
+      const text = scoreRace(table, doc.scoringRoster, state.groups, state.race, pointsFor(doc.type), isBattle(doc));
       const completed = Math.max(table.races, state.race);
       const posted = await postResults(doc, channel, text,
         `✅ ${raceTitle(doc)} ${state.race} saved — ${doc.scoringTracks[state.race - 1]}. ${completed} / ${doc.trackCount} ${raceWord(doc)}s scored.${

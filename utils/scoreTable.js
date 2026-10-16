@@ -46,10 +46,23 @@ function extractTemplate(message) {
   return blocks[0];
 }
 
-function scoreRace(table, roster, order, race, points) {
+// Racing skips positions occupied by a tie; battle advances by one group.
+function rankGroups(groups, battle = false) {
+  let place = 1;
+  return groups.map((players) => {
+    const group = { place, players };
+    place += battle ? 1 : players.length;
+    return group;
+  });
+}
+
+function scoreRace(table, roster, selections, race, points, battle = false) {
   if (!Number.isInteger(race) || race < 1 || race > table.races + 1) throw new Error('Invalid race number.');
   const count = roster.length;
-  if (order.length !== count || new Set(order).size !== count
+  // Accept the original flat order too, so callers and old drafts remain compatible.
+  const groups = selections.map((selection) => (Array.isArray(selection) ? selection : [selection]));
+  const order = groups.flat();
+  if (groups.some((group) => !group.length) || order.length !== count || new Set(order).size !== count
     || order.some((id) => !roster.some((player) => player.discordId === id))) {
     throw new Error(`Select all ${count} players exactly once before saving scores.`);
   }
@@ -57,10 +70,14 @@ function scoreRace(table, roster, order, race, points) {
     throw new Error('This lobby mode does not have a configured points system for this player count.');
   }
   const lines = table.lines.slice();
+  const awards = new Map();
+  rankGroups(groups, battle).forEach(({ place, players }) => {
+    players.forEach((id) => awards.set(id, points[place - 1]));
+  });
   table.rows.forEach((row) => {
     const player = roster.find((entry) => entry.prefix === row.prefix);
     const scores = row.scores.slice();
-    scores[race - 1] = points[order.indexOf(player.discordId)];
+    scores[race - 1] = awards.get(player.discordId);
     lines[row.index] = `${row.prefix} ${scores.join('|')}`;
   });
   return lines.join('\n');
@@ -71,5 +88,5 @@ function ordinal(number) {
 }
 
 module.exports = {
-  readTemplate, extractTemplate, scoreRace, ordinal,
+  readTemplate, extractTemplate, scoreRace, rankGroups, ordinal,
 };
