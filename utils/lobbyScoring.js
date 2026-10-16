@@ -487,7 +487,7 @@ function createLobbyScoring({
 
   async function open(doc, channel, args) {
     if (args.length && (args.length !== 2 || args[0] !== 'edit' || !/^[1-9]\d*$/.test(args[1]))) {
-      throw new Error('Use `!l score` or `!l score edit 3`.');
+      throw new Error('Use `!l score`, `!l score edit 3` or `!l score help`.');
     }
     await recoverBattleModes(doc, channel);
     if (doc.scoringPanelId) {
@@ -526,6 +526,9 @@ function createLobbyScoring({
 
   async function command(message, args) {
     try {
+      if (args.length === 1 && args[0].toLowerCase() === 'help') {
+        return await showHelp(message.guild.id, message.channel);
+      }
       const number = message.channel.name.match(/^lobby-room-(\d+)$/i);
       const room = number && await Room.findOne({ guild: message.guild.id, number: Number(number[1]) });
       if (!room || !room.lobby) throw new Error('Use `!l score` in an active lobby room with a selected scorekeeper.');
@@ -534,6 +537,36 @@ function createLobbyScoring({
     } catch (error) {
       return message.channel.warn(error.message);
     }
+  }
+
+  function showHelp(guildId, channel) {
+    const staff = getStaffRole(guildId);
+    return channel.send({
+      content: [
+        '**High IQ Scoring Guide**',
+        '',
+        'Use `!l score` to start scoring, and to continue scoring after each race',
+        'To do scores, press player name buttons in the order of their position',
+        '',
+        'Press **Save scores ✅** when you are done scoring a race',
+        'Press **Undo ↩️** to undo one score from current race',
+        'Press **Reset ❌** to undo all scores from current race',
+        'Use `!l score edit #` to edit a previous race. Replace `#` with race number',
+        '',
+        'If you have ties, press **Tie ⚖️** to start selecting tied players',
+        'Press **Tie done** when you are done selecting tied players',
+        '',
+        'If you have penalties, first finish scoring the entire race, before saving scores, press **Penalty 💀** and select a penalized player. Penalties are added one by one.',
+        'Press **-4 points** to add a -4 penalty',
+        'Press **8th (0 pts)** to add a 8th place + 0 points penalty',
+        'Press **Penalty done** to return to the review, then **Save scores ✅**',
+        '',
+        'If you want to change scorekeepers, use `!l change scorekeeper @player` to give scorekeeping to someone else in the lobby',
+        '',
+        `If you have any questions, ping ${staff ? `<@&${staff.id}>` : '@Staff'} and ask away`,
+      ].join('\n'),
+      allowedMentions: { parse: [] },
+    });
   }
 
   async function closeScorekeeperChange(lobbyId, pending, content) {
@@ -623,7 +656,7 @@ function createLobbyScoring({
       + 'Tap players in finishing order, double-check, then press **Save scores ✅**.\n\n'
       + `Type \`!l score\` again after each ${raceWord(doc)}. To go back and edit a previous ${raceWord(doc)}, `
       + `use \`!l score edit #\`, and replace # with the ${raceWord(doc)} number. `
-      + `Use \`!scorehelp\` or ping ${staff ? `<@&${staff.id}>` : '@Staff'} if you need help!`,
+      + `Use \`!l score help\` or ping ${staff ? `<@&${staff.id}>` : '@Staff'} if you need help!`,
       allowedMentions: { parse: [], users: [doc.scorekeeperId] },
     });
     return '**High IQ Scoring** enabled.';

@@ -41,6 +41,10 @@ count and ordered map list, including a custom count when configured.
 
 Only that scorekeeper can activate the system, use `!l score` to open an entry, press entry controls,
 edit past races or restore a backup. Staff privileges do not bypass this restriction.
+Anyone can read `!l score help` wherever normal bot commands are allowed, without
+an active lobby or scorekeeper. It shows the High IQ Scoring Guide without reading
+or changing lobby state. The configured Staff role appears as a mention with
+notifications disabled.
 All panels and results remain public to members with existing room read access;
 successful button presses are acknowledged silently and rejection messages are private. No channel permissions
 or server roles are changed by scoring.
@@ -58,10 +62,9 @@ there is no additional database state or restart recovery.
 ## Race entry
 
 After activation, the bot pings the scorekeeper with a short guide covering entry,
-saving, the next race and editing previous races. It points to `!scorehelp` and
-mentions the configured Staff role without notifying that role. Staff maintain
-the help text separately using `!command add scorehelp`; no built-in help handler
-or response is included in scoring. `!l score` opens
+saving, the next race and editing previous races. It points to `!l score help` and
+mentions the configured Staff role without notifying that role. The built-in help
+guide covers scoring, editing, ties, penalties and scorekeeper handoffs. `!l score` opens
 the next race (or battle round) with its saved map name and stationary player buttons,
 two per row. Selected players are disabled and also rejected as duplicates by the handler.
 Battle titles include the announced arena and game mode, for example
