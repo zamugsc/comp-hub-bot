@@ -86,6 +86,7 @@ const { trackOptions } = require('../db/track_options');
 const { consoles } = require('../db/consoles');
 const getRandomArrayElement = require('../utils/getRandomArrayElement');
 const resultContainsBannedPlayer = require('../utils/resultContainsBannedPlayer');
+const tournamentSignupFields = require('../utils/tournamentSignupFields');
 const ucfirst = require('../utils/ucfirst');
 
 const lock = new AsyncLock();
@@ -500,7 +501,8 @@ async function getEmbed(doc, players, tracks, roomChannel) {
       image: {
         url: doc.getStartedIcon(),
       },
-      fields: duoTournament ? splitTournamentFields(fields) : fields,
+      fields: doc.isTournament() && doc.isSolos() ? tournamentSignupFields(fields)
+        : duoTournament ? splitTournamentFields(fields) : fields,
       footer: getFooter(doc),
       timestamp,
     };
@@ -530,7 +532,8 @@ async function getEmbed(doc, players, tracks, roomChannel) {
         name: `Gathering ${doc.getTitle()}`,
         icon_url: iconUrl,
       },
-      fields: duoTournament ? splitTournamentFields(fields) : fields,
+      fields: doc.isTournament() && doc.isSolos() ? tournamentSignupFields(fields)
+        : duoTournament ? splitTournamentFields(fields) : fields,
       footer: getFooter(doc),
       timestamp,
     };
