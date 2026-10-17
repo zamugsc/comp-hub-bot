@@ -244,7 +244,7 @@ function createLobbyScoring({
       name: penalties.length ? 'Original finishing order' : 'Finishing order',
       value: order.length ? ranked.flatMap(({ place, players }) => players.map((id) => {
         const player = doc.scoringRoster.find((entry) => entry.discordId === id);
-        return `${place}. ${player.name} ${mention(id)}`;
+        return `${place}\\. ${player.name} ${mention(id)}${players.length > 1 ? ' (Tied)' : ''}`;
       })).join('\n') : 'No players selected yet.',
     }];
     if (state.penaltyMode) fields.push({ name: 'Penalty player', value: state.penaltyPlayer ? mention(state.penaltyPlayer) : 'Select a player below.' });
@@ -253,7 +253,7 @@ function createLobbyScoring({
     if (penalties.length && complete) {
       const awards = raceAwards(state.groups, pointsFor(doc.type, count), isBattle(doc), penalties);
       fields.push({ name: 'Adjusted scores', value: [...awards].sort((a, b) => a[1].place - b[1].place)
-        .map(([id, award]) => `${award.place}. ${mention(id)} — ${award.cell}${award.cell.includes('-') ? ` = ${award.total}` : ''} pts`).join('\n') });
+        .map(([id, award]) => `${award.place}\\. ${mention(id)} — ${award.cell}${award.cell.includes('-') ? ` = ${award.total}` : ''} pts`).join('\n') });
     }
     return {
       content: '',
@@ -278,7 +278,8 @@ function createLobbyScoring({
     const field = (embed.fields || []).find((entry) => ['Finishing order', 'Original finishing order'].includes(entry.name));
     if (!field) throw new Error('The unfinished scoring selections are missing.');
     const lines = field.value === 'No players selected yet.' ? [] : field.value.split('\n');
-    const selected = lines.map((line) => line.match(/^(\d+)\. .* <@!?(\d+)>$/));
+    // Accept older unescaped panels as well as literal place numbers and tie labels.
+    const selected = lines.map((line) => line.match(/^(\d+)\\?\. .* <@!?(\d+)>(?: \(Tied\))?$/));
     if (selected.some((match) => !match)) {
       throw new Error('The unfinished scoring selections are invalid.');
     }

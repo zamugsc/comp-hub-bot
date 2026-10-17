@@ -126,8 +126,12 @@ for the next position. Tie is disabled when all remaining players share a team.
 Team membership comes from the lobby's saved team list, including on restart;
 missing or invalid team assignments disable tie entry until corrected. Existing
 unfinished same-team ties must be corrected with Undo or Reset ❌ before saving.
-The review displays the same place number beside every
-member of a tie, and the visible panel retains an unfinished tie across restarts.
+The finishing-order list displays the same place number and a `(Tied)` label beside
+every member of a group with two or more players, both during selection and after
+**Tie done**. Place numbers are escaped to prevent Discord from renumbering the list,
+including the adjusted-score preview when penalties are present. Undo removes the
+labels when only one player remains in a group. The visible panel retains an
+unfinished tie across restarts, and older panels without labels remain readable.
 
 Every tied player receives the full points for their shared position. Racing,
 itemless and Insta formats skip the places occupied by the tie: two tied for first
