@@ -261,6 +261,11 @@ are changed. The table renderer is unchanged.
 Run `node --test tests/lobby-scoring.test.js` for the feature and
 `node --test tests/*.test.js` for the offline regression suite. Discord, rendering and
 database boundaries are mocked; tests never start the bot or connect to MongoDB.
+Incoming-component coverage also adds Discord's numeric component `id` fields
+and rehydrates responses through the installed `discord-buttons` decoder before
+testing player picks, resume and Laphit selection. A startup compatibility adapter
+preserves the separate string `custom_id` used by buttons and menus; the scoring
+reader also ignores non-string ids when looking for a Laphit menu.
 The existing renderer, flags and fonts are intentionally untouched. Mobile layout,
 live Discord permissions and the deployed OS/native canvas runtime need separate
 validation. The bot uses its existing room access and needs message history, sending,

@@ -8,6 +8,7 @@ const Discord = require('discord.js');
 const moment = require('moment');
 const { CronJob } = require('cron');
 const disbut = require('discord-buttons');
+const installDiscordButtonsCompat = require('./utils/discordButtonsCompat');
 const config = require('./config');
 const { Clan } = require('./db/models/clan');
 const { Command } = require('./db/models/command');
@@ -31,6 +32,7 @@ client.flags = flags;
 client.commands = new Discord.Collection();
 client.getEmote = (name, id) => `<:${name}:${id}>`;
 
+installDiscordButtonsCompat();
 disbut(client);
 
 const commandFiles = fs.readdirSync('./commands').filter((file) => file.endsWith('.js'));

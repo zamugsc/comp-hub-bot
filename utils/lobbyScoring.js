@@ -333,7 +333,8 @@ function createLobbyScoring({
       || order.length !== doc.scoringRoster.length || tiePrompt)) throw new Error('The unfinished penalty selection is invalid.');
     if (isBattle(doc) && (penalties.length || targetField)) throw new Error('Penalties are not available in battle modes.');
     const menus = (message.components || []).flatMap((entry) => entry.components || [])
-      .filter((entry) => (entry.custom_id || '').startsWith(control(doc, 'lapvalue', '')));
+      .filter((entry) => entry && entry.type === 3 && typeof entry.custom_id === 'string'
+        && entry.custom_id.startsWith(control(doc, 'lapvalue', '')));
     const laphitMenu = menus.length ? menus[0].custom_id : null;
     if (menus.length > 1 || (laphitMenu && (!isWar(doc) || !target
       || !laphitMenu.startsWith(control(doc, 'lapvalue', `${target[1]}-`))
