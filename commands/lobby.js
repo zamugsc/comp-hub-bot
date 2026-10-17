@@ -99,6 +99,8 @@ const lobbyScoring = createLobbyScoring({ Lobby, Room, Player, withRoomLock, poi
 
 const NAT3 = 'NAT 3';
 const FORCE_START_COOLDOWN = 5;
+// Temporary queue-fill testing: revert this commit to restore waiting-lobby expiry.
+const LOBBY_EXPIRATION_ENABLED = false;
 
 /**
  * Returns the footer for the lobby embed
@@ -3252,6 +3254,8 @@ const checkOldLobbies = () => {
       }
     });
   });
+
+  if (!LOBBY_EXPIRATION_ENABLED) return;
 
   Lobby.find({ started: false }).then((docs) => {
     // eslint-disable-next-line consistent-return
