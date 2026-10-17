@@ -81,7 +81,8 @@ state or restart recovery. Server roles and channel permissions are unchanged.
 
 ## Race entry
 
-After activation, the bot pings the scorekeeper with a short guide covering entry,
+After activation, the bot pings the scorekeeper with a short guide displaying the
+`highiq` application emoji (`1560812252356026499`) and covering entry,
 saving, the next race and editing previous races. It points to `!l score help` and
 mentions the configured Staff role without notifying that role. The built-in help
 guide covers scoring, editing, ties, penalties and scorekeeper handoffs. `!l score` opens

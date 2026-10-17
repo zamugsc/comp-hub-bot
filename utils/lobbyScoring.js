@@ -6,6 +6,7 @@ const {
 
 // Same team order as generateTemplate's blue, red, green and yellow colors.
 const teamMarkers = ['🟦', '🟥', '🟩', '🟨'];
+const highIqEmoji = '<:highiq:1560812252356026499>';
 
 // Inject Discord/database boundaries so every flow can be exercised offline.
 function createLobbyScoring({
@@ -749,10 +750,10 @@ function createLobbyScoring({
     await announcement.edit({ components: [row(button(control(doc, 'activate'), 'High IQ Scoring enabled', true))] });
     const staff = getStaffRole(doc.guild);
     await channel.send({
-      content: `**${mention(doc.scorekeeperId)}** **High IQ Scoring** enabled! Type \`!l score\` to start scoring the first ${raceWord(doc)}.\n`
-      + 'Tap players in finishing order, double-check, then press **Save scores ✅**.\n\n'
-      + `Type \`!l score\` again after each ${raceWord(doc)}. To go back and edit a previous ${raceWord(doc)}, `
-      + `use \`!l score edit #\`, and replace # with the ${raceWord(doc)} number. `
+      content: `${mention(doc.scorekeeperId)} **High IQ Scoring** ${highIqEmoji} enabled! Use \`!l score\` to start scoring the first ${raceWord(doc)}\n`
+      + 'To do scores, press player name buttons in the order of their position, then press **Save scores** ✅\n\n'
+      + `Use \`!l score\` again after each ${raceWord(doc)}. To edit a previous ${raceWord(doc)}, `
+      + `use \`!l score edit #\`, and replace \`#\` with the ${raceWord(doc)} number\n`
       + `Use \`!l score help\` or ping ${staff ? `<@&${staff.id}>` : '@Staff'} if you need help!`,
       allowedMentions: { parse: [], users: [doc.scorekeeperId] },
     });
