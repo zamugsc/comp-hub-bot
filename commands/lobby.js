@@ -3589,3 +3589,4 @@ function checkOldTeams() {
 new CronJob('* * * * *', checkOldTeams).start();
 
 client.on('clickButton', (button) => lobbyScoring.handleButton(button));
+client.on('clickMenu', (menu) => lobbyScoring.handleMenu(menu));

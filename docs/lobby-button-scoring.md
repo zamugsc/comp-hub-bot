@@ -148,17 +148,31 @@ and any tie is confirmed. It stays disabled for incomplete or invalid entries.
 Battle panels have no penalty controls, and forged penalty actions are rejected.
 
 Enter the actual finishing order first. Press **Penalty 💀**, select a player using
-the existing player buttons, then use **-4 points** and **Last place (0 pts)**.
+the existing player buttons, then use the deduction control and **Last place (0 pts)**.
 The selected player's button is highlighted. Each **-4 points** press adds another
-type A deduction, without a gameplay cap or zero floor. Type A never changes positions.
+type A deduction in FFA and Duos, without a gameplay cap or zero floor. Type A
+never changes positions.
+
+In non-battle 3v3/4v4 wars, including Itemless and Insta, **Laphit** replaces
+**-4 points**. It opens a dropdown containing **-1** through **-10** and **Cancel**.
+Selecting a value adds that deduction to the selected player's race score and
+returns to the penalty controls. Multiple Laphits of any allowed value stack
+without a gameplay cap; scores can become negative and placements never change.
+The dropdown temporarily replaces the control row and locks player selection,
+keeping the panel within five rows. Cancel adds no penalty or undo step. Each menu
+is bound to its selected player and accepts only one deduction, so stale or
+duplicate selections cannot add another penalty. Other formats reject Laphit
+actions; war panels reject the old static -4 action.
+
 **Last place (0 pts)** toggles type B: the player receives zero base points and is
 removed from their original position or tie. Everyone else moves up, retaining
 their remaining ties under the normal racing rules. All type B recipients share
-last place and zero base points, including teammates. Type A deductions still apply
+last place and zero base points, including teammates. Deductions, including Laphits, still apply
 to them. Toggling B off restores the original order and ties.
 
 While applying penalties, the control row becomes **Undo ↩️**, **-4 points**,
-**Last place (0 pts)**, **Penalty done**. Undo reverses the latest penalty action;
+**Last place (0 pts)**, **Penalty done**, with **Laphit** replacing **-4 points** in
+wars. Undo reverses the latest penalty action, including one Laphit selection;
 selecting another player does not create an undo step. **Penalty done** returns to
 review without saving. Saving, resetting or changing finishing positions is blocked
 until penalty entry is closed. Normal Undo can then change finishing positions,
@@ -168,6 +182,9 @@ unfinished entry, including penalties. The review shows adjusted places and scor
 The saved race cell retains deductions: `9-4`, `9-8`, `9-12`, or `0-4` for B plus A.
 These evaluate to 5, 1, -3 and -4 respectively. A B-only cell is `0`. Appending races,
 correcting another race and restoring a backup preserve the other cells' deductions.
+War cells use the same notation with the summed Laphit deduction: for example,
+`10-3`, `10-17`, or `0-5`. Older unfinished war drafts with static -4 deductions
+retain their existing deduction amount when resumed with Laphit controls.
 Correcting a scored race uses the existing full re-entry flow, including its penalties.
 The existing renderer understands this notation and is unchanged. Penalties live in
 the unfinished panel and saved score template; no new database fields are needed.

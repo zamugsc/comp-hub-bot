@@ -1,6 +1,7 @@
 const defaultBuilders = require('discord-buttons');
+const { randomBytes } = require('crypto');
 const {
-  readTemplate, extractTemplate, scoreRace, raceAwards, rankGroups, ordinal,
+  readTemplate, extractTemplate, scoreRace, raceAwards, penaltyDeduction, rankGroups, ordinal,
 } = require('./scoreTable');
 
 // Same team order as generateTemplate's blue, red, green and yellow colors.
@@ -13,7 +14,7 @@ function createLobbyScoring({
   now = Date.now, setTimer = setTimeout, clearTimer = clearTimeout,
   getSubmissionChannel = () => null, resultContainsBannedPlayer, getStaffRole = () => null,
 }) {
-  const { MessageButton, MessageActionRow } = builders;
+  const { MessageButton, MessageActionRow, MessageMenu } = builders;
   const scorekeeperChanges = new Map();
   const penaltyHistory = new Map();
   const submissionOffers = new Map();
@@ -30,6 +31,7 @@ function createLobbyScoring({
   const url = (doc, messageId) => `https://discord.com/channels/${doc.guild}/${doc.scoringChannelId}/${messageId}`;
   const sourceId = (doc) => doc.scoringMessageId || doc.scoringTemplateMessageId;
   const isBattle = (doc) => doc.type.startsWith('battle');
+  const isWar = (doc) => !isBattle(doc) && /_(?:3v3|4v4)$/.test(doc.type);
   const raceWord = (doc) => (isBattle(doc) ? 'round' : 'race');
   const raceTitle = (doc) => (isBattle(doc) ? 'Battle' : 'Race');
   const mapLabel = (doc, race) => {
@@ -201,22 +203,30 @@ function createLobbyScoring({
     if (state.tie) prompt = `Select players tied for ${ordinal(next)} place.\nPress **Tie done** after selecting at least two players.`;
     else if (order.length < count) prompt = next === 8 ? 'Select 8th place 🐢' : `Select ${ordinal(next)} place player`;
     if (state.penaltyMode) prompt = state.penaltyPlayer
-      ? `Adjust penalties for ${mention(state.penaltyPlayer)}. Each **-4 points** press adds one deduction; **Last place (0 pts)** toggles the last-place penalty.\nPress **Penalty done** to return to the score review.`
-      : 'Select a player below to adjust their penalties, then press **-4 points** or **Last place (0 pts)**.';
+      ? `Adjust penalties for ${mention(state.penaltyPlayer)}. ${isWar(doc) ? '**Laphit** adds a deduction from -1 to -10' : 'Each **-4 points** press adds one deduction'}; **Last place (0 pts)** toggles the last-place penalty.\nPress **Penalty done** to return to the score review.`
+      : `Select a player below to adjust their penalties, then press **${isWar(doc) ? 'Laphit' : '-4 points'}** or **Last place (0 pts)**.`;
+    if (state.laphitMenu) prompt = `Select a Laphit deduction for ${mention(state.penaltyPlayer)}, or choose **Cancel**.`;
     if (invalid) prompt += '\nTeammates cannot share a tie. Use **Undo ↩️** or **Reset ❌** to correct the entry.';
     else if (teams === null) prompt += '\nTeam assignments are unavailable. Ties are disabled.';
     const components = [];
     for (let i = 0; i < count; i += 2) {
       components.push(row(...doc.scoringRoster.slice(i, i + 2).map((player) => button(
-        control(doc, 'pick', player.discordId), player.name.slice(0, 80), !state.penaltyMode && (order.includes(player.discordId)
-          || (state.tie && (teams === null || sameTeam(teams, player.discordId, pending)))),
+        control(doc, 'pick', player.discordId), player.name.slice(0, 80), Boolean(state.laphitMenu) || (!state.penaltyMode && (order.includes(player.discordId)
+          || (state.tie && (teams === null || sameTeam(teams, player.discordId, pending))))),
         state.penaltyMode && state.penaltyPlayer === player.discordId ? 'blurple' : 'grey',
         teams && teamMarkers[teams.get(player.discordId)],
       ))));
     }
-    if (state.penaltyMode) {
+    if (state.laphitMenu) {
+      const menu = new MessageMenu().setID(state.laphitMenu).setPlaceholder('Select Laphit penalty')
+        .setMinValues(1).setMaxValues(1).addOptions(
+          ...Array.from({ length: 10 }, (_, i) => ({ label: `-${i + 1}`, value: `-${i + 1}` })),
+          { label: 'Cancel', value: 'cancel' },
+        );
+      components.push(row(menu));
+    } else if (state.penaltyMode) {
       components.push(row(button(control(doc, 'undo'), 'Undo ↩️', !history.length),
-        button(control(doc, 'minus'), '-4 points', !state.penaltyPlayer),
+        button(control(doc, isWar(doc) ? 'laphit' : 'minus'), isWar(doc) ? 'Laphit' : '-4 points', !state.penaltyPlayer),
         button(control(doc, 'last'), 'Last place (0 pts)', !state.penaltyPlayer,
           penalties.some((entry) => entry.playerId === state.penaltyPlayer && entry.last) ? 'red' : 'grey'),
         button(control(doc, 'penaltydone'), 'Penalty done')));
@@ -238,7 +248,7 @@ function createLobbyScoring({
     }];
     if (state.penaltyMode) fields.push({ name: 'Penalty player', value: state.penaltyPlayer ? mention(state.penaltyPlayer) : 'Select a player below.' });
     if (penalties.length) fields.push({ name: 'Penalties', value: penalties.map((entry) =>
-      `${mention(entry.playerId)}: ${entry.count ? `-${entry.count * 4}` : '0'} points${entry.last ? '; last place' : ''}`).join('\n') });
+      `${mention(entry.playerId)}: ${penaltyDeduction(entry) ? `-${penaltyDeduction(entry)}` : '0'} points${entry.last ? '; last place' : ''}`).join('\n') });
     if (penalties.length && complete) {
       const awards = raceAwards(state.groups, pointsFor(doc.type, count), isBattle(doc), penalties);
       fields.push({ name: 'Adjusted scores', value: [...awards].sort((a, b) => a[1].place - b[1].place)
@@ -308,10 +318,11 @@ function createLobbyScoring({
       const match = line.match(/^<@!?(\d+)>: (-?\d+) points(; last place)?$/);
       const deduction = match && -Number(match[2]);
       if (!match || !doc.scoringRoster.some((player) => player.discordId === match[1])
-        || !Number.isSafeInteger(deduction) || deduction < 0 || deduction % 4 !== 0 || (!deduction && !match[3])) {
+        || !Number.isSafeInteger(deduction) || deduction < 0 || (!isWar(doc) && deduction % 4 !== 0) || (!deduction && !match[3])) {
         throw new Error('The unfinished penalties are invalid.');
       }
-      return { playerId: match[1], count: deduction / 4, last: Boolean(match[3]) };
+      return { playerId: match[1], count: isWar(doc) ? 0 : deduction / 4,
+        ...(isWar(doc) ? { laphit: deduction } : {}), last: Boolean(match[3]) };
     }) : [];
     if (new Set(penalties.map((entry) => entry.playerId)).size !== penalties.length) throw new Error('The unfinished penalties are invalid.');
     const targetField = (embed.fields || []).find((entry) => entry.name === 'Penalty player');
@@ -320,9 +331,17 @@ function createLobbyScoring({
       || (target && !doc.scoringRoster.some((player) => player.discordId === target[1]))
       || order.length !== doc.scoringRoster.length || tiePrompt)) throw new Error('The unfinished penalty selection is invalid.');
     if (isBattle(doc) && (penalties.length || targetField)) throw new Error('Penalties are not available in battle modes.');
+    const menus = (message.components || []).flatMap((entry) => entry.components || [])
+      .filter((entry) => (entry.custom_id || '').startsWith(control(doc, 'lapvalue', '')));
+    const laphitMenu = menus.length ? menus[0].custom_id : null;
+    if (menus.length > 1 || (laphitMenu && (!isWar(doc) || !target
+      || !laphitMenu.startsWith(control(doc, 'lapvalue', `${target[1]}-`))
+      || !/^[a-f0-9]{16}$/.test(laphitMenu.slice(control(doc, 'lapvalue', `${target[1]}-`).length))))) {
+      throw new Error('The unfinished Laphit menu is invalid.');
+    }
     return {
       race: Number(race[1]), source: source[1], groups, tie: Boolean(tiePrompt),
-      penalties, penaltyMode: Boolean(targetField), penaltyPlayer: target ? target[1] : null,
+      penalties, penaltyMode: Boolean(targetField), penaltyPlayer: target ? target[1] : null, laphitMenu,
     };
   }
 
@@ -558,6 +577,7 @@ function createLobbyScoring({
         '',
         'If you have penalties, first finish scoring the entire race, before saving scores, press **Penalty 💀** and select a penalized player. Penalties are added one by one.',
         'Press **-4 points** to add a -4 penalty',
+        'In 3v3/4v4 wars, **Laphit** replaces **-4 points**. Choose a deduction from -1 to -10; repeated Laphits stack without a cap.',
         'Press **8th (0 pts)** to add a 8th place + 0 points penalty',
         'Press **Penalty done** to return to the review, then **Save scores ✅**',
         '',
@@ -754,7 +774,7 @@ function createLobbyScoring({
     return 'Backup restored. Run `!l score` to continue.';
   }
 
-  async function editPanel(doc, channel, messageId, action, playerId) {
+  async function editPanel(doc, channel, messageId, action, playerId, values) {
     if (doc.scoringPanelId !== messageId) throw new Error('This panel is no longer active. Run `!l score` to continue.');
     const panel = await fetchMessage(doc, channel, messageId);
     const state = readPanel(doc, panel);
@@ -762,10 +782,13 @@ function createLobbyScoring({
     const teams = teamAssignments(doc);
     let history = penaltyHistory.get(idOf(doc)) || [];
     if (state.source !== sourceId(doc)) throw new Error('The saved scores changed. Reopen the scoring entry before continuing.');
-    if (isBattle(doc) && ['penalty', 'minus', 'last', 'penaltydone'].includes(action)) {
+    if (isBattle(doc) && ['penalty', 'minus', 'last', 'penaltydone', 'laphit', 'lapvalue'].includes(action)) {
       throw new Error('Penalties are not available in battle modes.');
     }
-    if (state.penaltyMode && !['pick', 'minus', 'last', 'penaltydone', 'undo'].includes(action)) {
+    if (state.laphitMenu && action !== 'lapvalue') throw new Error('Select a Laphit deduction or Cancel before continuing.');
+    if (['laphit', 'lapvalue'].includes(action) && !isWar(doc)) throw new Error('Laphit penalties are only available in racing 3v3/4v4 lobbies.');
+    if (action === 'minus' && isWar(doc)) throw new Error('Use Laphit to choose the deduction for this war lobby.');
+    if (state.penaltyMode && !['pick', 'minus', 'last', 'penaltydone', 'undo', 'laphit', 'lapvalue'].includes(action)) {
       throw new Error('Press Penalty done to return to the finishing order before continuing.');
     }
     if (action === 'penalty') {
@@ -773,17 +796,31 @@ function createLobbyScoring({
       validateTieTeams(teams, state.groups);
       state.penaltyMode = true;
       state.penaltyPlayer = null;
-    } else if (action === 'minus' || action === 'last') {
+    } else if (action === 'laphit') {
       if (!state.penaltyMode || !state.penaltyPlayer) throw new Error('Open Penalty 💀 and select a player first.');
+      state.laphitMenu = control(doc, 'lapvalue', `${state.penaltyPlayer}-${randomBytes(8).toString('hex')}`);
+    } else if (['minus', 'last', 'lapvalue'].includes(action)) {
+      if (!state.penaltyMode || !state.penaltyPlayer) throw new Error('Open Penalty 💀 and select a player first.');
+      if (action === 'lapvalue') {
+        if (!state.laphitMenu || state.laphitMenu !== control(doc, 'lapvalue', playerId)) throw new Error('This Laphit menu is no longer active.');
+        if (!Array.isArray(values) || values.length !== 1 || typeof values[0] !== 'string'
+          || !/^(?:-[1-9]|-10|cancel)$/.test(values[0])) throw new Error('Choose one Laphit deduction from -1 to -10, or Cancel.');
+        state.laphitMenu = null;
+        if (values[0] === 'cancel') {
+          await panel.edit(panelPayload(doc, state, history));
+          return 'Laphit entry cancelled.';
+        }
+      }
       const before = state.penalties.find((entry) => entry.playerId === state.penaltyPlayer)
         || { playerId: state.penaltyPlayer, count: 0, last: false };
       const changed = { ...before };
       if (action === 'minus') changed.count += 1;
+      else if (action === 'lapvalue') changed.laphit = (changed.laphit || 0) - Number(values[0]);
       else changed.last = !changed.last;
-      if (!Number.isSafeInteger(changed.count * 4)) throw new Error('Invalid player penalty.');
+      if (!Number.isSafeInteger(penaltyDeduction(changed))) throw new Error('Invalid player penalty.');
       history = [...history, before];
       state.penalties = state.penalties.filter((entry) => entry.playerId !== changed.playerId);
-      if (changed.count || changed.last) state.penalties.push(changed);
+      if (penaltyDeduction(changed) || changed.last) state.penalties.push(changed);
     } else if (action === 'penaltydone') {
       if (!state.penaltyMode) throw new Error('There is no penalty entry in progress.');
       state.penaltyMode = false;
@@ -793,7 +830,7 @@ function createLobbyScoring({
       if (!before) throw new Error('There is no penalty action to undo.');
       history = history.slice(0, -1);
       state.penalties = state.penalties.filter((entry) => entry.playerId !== before.playerId);
-      if (before.count || before.last) state.penalties.push(before);
+      if (penaltyDeduction(before) || before.last) state.penalties.push(before);
       state.penaltyPlayer = before.playerId;
     } else if (action === 'pick') {
       if (!doc.scoringRoster.some((player) => player.discordId === playerId)) throw new Error('Invalid player.');
@@ -872,7 +909,7 @@ function createLobbyScoring({
           if (match[2] === 'activate') return activate(doc, channel, interaction.message.id);
           if (match[2] === 'restore') return restore(doc, channel, interaction.message.id);
           if (['submit', 'submitmanual'].includes(match[2])) return submitScores(doc, channel, interaction.message.id, match[2] === 'submitmanual');
-          return editPanel(doc, channel, interaction.message.id, match[2], match[3]);
+          return editPanel(doc, channel, interaction.message.id, match[2], match[3], interaction.values);
         }, match[2] !== 'activate', acknowledged);
     } catch (error) {
       log('Could not process scoring button:', error);
@@ -883,6 +920,11 @@ function createLobbyScoring({
         }).catch(log);
       }
     }
+  }
+
+  function handleMenu(interaction) {
+    if (!/^score:[^:]+:lapvalue:/.test(interaction.id)) return;
+    return handleButton(interaction);
   }
 
   async function setTracks(doc, tracks) {
@@ -897,7 +939,7 @@ function createLobbyScoring({
   }
 
   return {
-    initialise, selectScorekeeper, command, changeScorekeeper, handleButton, eligible, setTracks, endBlockReason, forgetSubmission,
+    initialise, selectScorekeeper, command, changeScorekeeper, handleButton, handleMenu, eligible, setTracks, endBlockReason, forgetSubmission,
   };
 }
 

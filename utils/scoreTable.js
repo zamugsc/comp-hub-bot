@@ -60,6 +60,10 @@ function rankGroups(groups, battle = false) {
   });
 }
 
+function penaltyDeduction(penalty) {
+  return penalty.count * 4 + (penalty.laphit === undefined ? 0 : penalty.laphit);
+}
+
 // Always derive placements from the original finishing groups, never an already adjusted order.
 function raceAwards(groups, points, battle = false, penalties = []) {
   const order = groups.flat();
@@ -71,7 +75,8 @@ function raceAwards(groups, points, battle = false, penalties = []) {
   for (const penalty of penalties) {
     if (!order.includes(penalty.playerId) || adjustments.has(penalty.playerId)
       || !Number.isSafeInteger(penalty.count) || penalty.count < 0
-      || !Number.isSafeInteger(penalty.count * 4) || typeof penalty.last !== 'boolean') {
+      || (penalty.laphit !== undefined && (!Number.isSafeInteger(penalty.laphit) || penalty.laphit < 0))
+      || !Number.isSafeInteger(penaltyDeduction(penalty)) || typeof penalty.last !== 'boolean') {
       throw new Error('Invalid player penalty.');
     }
     adjustments.set(penalty.playerId, penalty);
@@ -85,7 +90,7 @@ function raceAwards(groups, points, battle = false, penalties = []) {
     const penalty = adjustments.get(id);
     if (penalty?.last) awards.set(id, { place: points.length, base: 0 });
     const award = awards.get(id);
-    const deduction = (penalty?.count || 0) * 4;
+    const deduction = penalty ? penaltyDeduction(penalty) : 0;
     Object.assign(award, { cell: deduction ? `${award.base}-${deduction}` : String(award.base), total: award.base - deduction });
   });
   return awards;
@@ -117,5 +122,5 @@ function ordinal(number) {
 }
 
 module.exports = {
-  readTemplate, extractTemplate, scoreRace, raceAwards, rankGroups, ordinal,
+  readTemplate, extractTemplate, scoreRace, raceAwards, penaltyDeduction, rankGroups, ordinal,
 };
