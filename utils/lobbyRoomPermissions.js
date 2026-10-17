@@ -108,13 +108,16 @@ async function releaseRoom(guild, room, { delayCleanup = false } = {}) {
   }
 
   const previousLobby = room.lobby;
+  const previousGame = room.tournamentGame;
   const previousCleanupAt = room.cleanupAt;
   room.lobby = null;
+  room.tournamentGame = null;
   room.cleanupAt = delayCleanup && channel ? new Date(Date.now() + ROOM_CHAT_GRACE_MS) : null;
   try {
     await room.save();
   } catch (error) {
     room.lobby = previousLobby;
+    room.tournamentGame = previousGame;
     room.cleanupAt = previousCleanupAt;
     throw error;
   }

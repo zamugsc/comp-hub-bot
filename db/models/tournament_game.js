@@ -1,0 +1,48 @@
+const { Schema, model } = require('mongoose');
+
+// A game is not a signup lobby. Completed games survive parent deletion/room reuse.
+const TournamentGame = new Schema({
+  tournamentId: { type: Schema.Types.ObjectId, required: true, index: true },
+  guild: String,
+  creator: String,
+  round: Number,
+  match: Number,
+  final: Boolean,
+  roomNumber: Number,
+  cardMessageId: String,
+  keeperMessageId: String,
+  posted: { type: Boolean, default: false },
+  started: { type: Boolean, default: true },
+  completed: { type: Boolean, default: false },
+  finished: { type: Boolean, default: false },
+  qualifiers: { type: [String], default: [] },
+  players: [String],
+  teamList: { type: Array, default: [] },
+  type: { type: String, default: 'race_ffa' },
+  mode: { type: String, default: 'standard' },
+  trackOption: String,
+  ranked: Boolean,
+  trackCount: Number,
+  scorekeeperId: { type: String, default: null },
+  scoringEnabled: { type: Boolean, default: false },
+  scoringChannelId: String,
+  scoringTemplateMessageId: String,
+  scoringMessageId: String,
+  scoringBackup: String,
+  scoringOfferId: String,
+  scoringPanelId: String,
+  scoringRecoveryId: String,
+  scoringRoster: { type: [{ discordId: String, name: String, prefix: String }], default: [] },
+  scoringTracks: { type: [String], default: [] },
+  scoringBattleModes: { type: [String], default: [] },
+  scoringSubmissionMessageId: String,
+  scoringSubmissionChannelId: String,
+  scoringSubmissionSourceId: String,
+  submissionOfferId: String,
+  submissionOfferSourceId: String,
+  submissionOfferChannelId: String,
+  submissionOfferClosed: { type: Boolean, default: false },
+}, { timestamps: true });
+TournamentGame.index({ tournamentId: 1, round: 1, match: 1 }, { unique: true });
+
+module.exports.TournamentGame = model('tournament_game', TournamentGame);

@@ -87,16 +87,33 @@ const { consoles } = require('../db/consoles');
 const getRandomArrayElement = require('../utils/getRandomArrayElement');
 const resultContainsBannedPlayer = require('../utils/resultContainsBannedPlayer');
 const tournamentSignupFields = require('../utils/tournamentSignupFields');
+const { TournamentGame } = require('../db/models/tournament_game');
+const tournamentScoringStore = require('../utils/tournamentScoringStore');
+const { createFfaTournament } = require('../utils/ffaTournament');
 const ucfirst = require('../utils/ucfirst');
 
 const lock = new AsyncLock();
-const lobbyScoring = createLobbyScoring({ Lobby, Room, Player, withRoomLock, pointsFor,
+const scoringStore = tournamentScoringStore({ Lobby, Room, Game: TournamentGame });
+const lobbyScoring = createLobbyScoring({ Lobby: scoringStore.Lobby, Room: scoringStore.Room, Player, withRoomLock, pointsFor,
   resultContainsBannedPlayer,
   getStaffRole: (guildId) => client.guilds.cache.get(guildId).roles.cache.find((role) =>
     role.name.toLowerCase() === config.roles.staff_role.toLowerCase()),
   getSubmissionChannel: (guildId) => client.guilds.cache.get(guildId).channels.cache.find((channel) => channel.type === 'text'
     && channel.name.toLowerCase() === config.channels.ranked_results_submissions_channel.toLowerCase()),
   drawTable: require('../utils/drawTable') });
+const ffaTournament = createFfaTournament({ Lobby, Game: TournamentGame, Room, Sequence, Player, Rank,
+  client, scoring: lobbyScoring, withRoomLock, findRoomChannel, getRoomChannel,
+  clearRoomMemberPermissions, releaseRoom, generateTracks, generateTemplate,
+  removeOtherQueues: removeFfaPlayersFromOtherQueues,
+  endTournament: (doc, message) => deleteLobby(doc, message),
+  cancelTournament: (doc) => deleteLobby(doc, null, false, true),
+  renderOverview: async (doc) => {
+    const overviewDoc = new Lobby(doc.toObject());
+    overviewDoc.players = doc.ffaOriginalPlayers;
+    overviewDoc.started = false;
+    return getEmbed(overviewDoc, overviewDoc.players, null);
+  },
+});
 
 const NAT3 = 'NAT 3';
 const FORCE_START_COOLDOWN = 5;
@@ -1205,7 +1222,9 @@ function allowLobbyChat(doc, player, message) {
   const guild = client.guilds.cache.get(doc.guild);
   return withRoomLock(doc.guild, async () => {
     const activeLobby = await Lobby.findOne({ _id: doc.id, started: true });
-    const room = await Room.findOne({ lobby: doc.id, guild: doc.guild });
+    const roomNumber = message.channel.name.match(/^lobby-room-(\d+)$/i);
+    const room = await Room.findOne({ lobby: doc.id, guild: doc.guild,
+      ...(doc.ffaManaged ? { number: roomNumber ? Number(roomNumber[1]) : -1 } : {}) });
     if (!activeLobby || !room) return message.channel.warn('This lobby no longer has an active room.');
     const cachedChannel = getRoomChannel(guild, room.number);
     if (!cachedChannel) return message.channel.warn('Could not find room channel.');
@@ -1235,6 +1254,13 @@ function startLobby(docId) {
     startedAt: new Date(),
   }, { new: true }).then((doc) => {
     if (!doc) return null;
+    if (doc.mode === 'tournament' && doc.type === 'race_ffa' && [16, 32, 64].includes(doc.maxPlayerCount)) {
+      return ffaTournament.start(doc).catch(async (error) => {
+        console.error(`Could not prepare FFA tournament ${doc.id}:`, error);
+        const channel = client.guilds.cache.get(doc.guild).channels.cache.get(doc.channel);
+        if (channel) await channel.warn(`Could not prepare the tournament: ${error.message} Creator/staff can retry with \`!l advance ${doc.id}\`.`);
+      });
+    }
     // eslint-disable-next-line max-len, arrow-body-style
     return client.guilds.cache.get(doc.guild).channels.cache.get(doc.channel).messages.fetch(doc.message).then((message) => {
       // eslint-disable-next-line arrow-body-style
@@ -1496,6 +1522,11 @@ function confirmLobbyStart(doc, message, override = false) {
 
   const playersCount = doc.players.length;
 
+  if (doc.mode === 'tournament' && doc.type === 'race_ffa'
+    && [16, 32, 64].includes(doc.maxPlayerCount) && playersCount !== doc.maxPlayerCount) {
+    return message.channel.warn('FFA tournaments require all selected places to be filled: 16, 32 or 64 players.');
+  }
+
   if (doc.isTournament() && doc.type === RACE_ITEMS_DUOS
     && (playersCount !== 16 || doc.maxPlayerCount !== 16)) {
     return message.channel.warn('The duo tournament pilot requires exactly 16 players.');
@@ -1532,6 +1563,17 @@ function confirmLobbyStart(doc, message, override = false) {
       }
     }).catch(() => message.channel.error('Command cancelled.'));
   });
+}
+
+async function removeFfaPlayersFromOtherQueues(doc) {
+  for (const playerId of doc.players) {
+    const otherLobbies = await Lobby.find({ _id: { $ne: doc._id }, players: playerId, started: false });
+    for (const other of otherLobbies) {
+      const guild = client.guilds.cache.get(other.guild);
+      const message = await guild.channels.cache.get(other.channel).messages.fetch(other.message);
+      await mogi({ message, users: null }, { id: playerId }, true);
+    }
+  }
 }
 
 function findLobby(lobbyID, isStaff, message, callback) {
@@ -1621,9 +1663,15 @@ function deleteLobby(doc, message, sendMessage = true, messageDeleted = false, {
         return false;
       }
     }
-    const room = await Room.findOne({ lobby: doc.id, guild: doc.guild });
-    const delayCleanup = delayRoomCleanup && doc.started && !messageDeleted;
-    const channel = room ? await releaseRoom(guild, room, { delayCleanup }) : null;
+    const assignedRooms = doc.ffaManaged ? await Room.find({ lobby: doc.id, guild: doc.guild })
+      : [await Room.findOne({ lobby: doc.id, guild: doc.guild })].filter(Boolean);
+    if (doc.ffaManaged) await ffaTournament.close(doc);
+    const delayCleanup = delayRoomCleanup && doc.started && !messageDeleted && !doc.ffaManaged;
+    let channel = null;
+    for (const room of assignedRooms) {
+      const released = await releaseRoom(guild, room, { delayCleanup });
+      if (!channel) channel = released;
+    }
 
     let endMessage = 'Lobby ended.';
     if (doc.started && doc.ranked) {
@@ -2229,8 +2277,10 @@ module.exports = {
         });
         break;
       case 'end':
+        if (await ffaTournament.command(message, true)) return;
         // eslint-disable-next-line consistent-return
         findLobby(lobbyID, message.member.isStaff(), message, (doc, msg) => {
+          if (doc.ffaManaged) return message.channel.warn('Finish the tournament in its final game room. To cancel it, delete the original signup message.');
           if (doc.started && doc.scoringEnabled) {
             const scoreBlock = lobbyScoring.endBlockReason(doc);
             if (scoreBlock) return message.channel.warn(scoreBlock);
@@ -2310,11 +2360,13 @@ module.exports = {
         });
         break;
       case 'advance':
+        if (await ffaTournament.command(message)) return;
         // eslint-disable-next-line consistent-return
         return findLobby(lobbyID && /^<@!?\d+>$/.test(lobbyID) ? null : lobbyID, message.member.isStaff(), message, (doc) => {
           if (!doc) {
             return message.channel.warn('You are not in a tournament lobby.');
           }
+          if (doc.ffaManaged || doc.ffaPhase === 'preparing') return ffaTournament.retry(doc, message);
 
           if (doc.type === RACE_ITEMS_DUOS) {
             return advanceDuoTournament(doc.id, message);
@@ -2373,6 +2425,7 @@ module.exports = {
       case 'reroll_tracks':
          // eslint-disable-next-line consistent-return
         findLobby(lobbyID, message.member.isStaff(), message, (doc) => {
+          if (doc.ffaManaged) return message.channel.warn('Tournament tracks are fixed for this round in every game room.');
           if (!doc.started) {
             return message.channel.warn(`You cannot reroll ${doc.isRacing() ? 'tracks' : 'arenas'} for a lobby that has not been started.`);
           }
@@ -3199,6 +3252,7 @@ function resumePermissionCleanups() {
   resumeTournamentCleanups(client).catch(console.error);
 }
 client.on('ready', resumePermissionCleanups);
+client.on('ready', () => ffaTournament.resume().catch(console.error));
 new CronJob('* * * * *', resumePermissionCleanups).start();
 
 client.on('messageDelete', async (message) => {
@@ -3426,6 +3480,9 @@ client.on('message', (message) => {
 client.on('ready', () => {
   Lobby.find().then((docs) => {
     docs.forEach(async (doc) => {
+      // Managed events validate their signup message in resume(), retaining the
+      // event on a transient fetch failure and releasing every room on deletion.
+      if (doc.ffaManaged || doc.ffaPhase === 'preparing') return;
       const guild = client.guilds.cache.get(doc.guild);
       if (!guild) {
         doc.delete();
@@ -3596,4 +3653,5 @@ function checkOldTeams() {
 new CronJob('* * * * *', checkOldTeams).start();
 
 client.on('clickButton', (button) => lobbyScoring.handleButton(button));
+client.on('clickButton', (button) => ffaTournament.keeper(button));
 client.on('clickMenu', (menu) => lobbyScoring.handleMenu(menu));

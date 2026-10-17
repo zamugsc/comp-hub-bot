@@ -79,15 +79,20 @@ function createLobbyScoring({
 
   async function update(doc, values) {
     // Do not save a stale whole lobby document over room, roster or draft updates.
-    const saved = await Lobby.findOneAndUpdate({ _id: doc._id, started: true }, { $set: values }, { new: true });
+    if (doc.tournamentId && values.scorekeeperId) values = { ...values, scoringEnabled: true };
+    const state = doc.tournamentId && doc.completed ? { completed: true } : { started: true };
+    const saved = await Lobby.findOneAndUpdate({ _id: doc._id, ...state }, { $set: values }, { new: true });
     if (!saved) throw new Error('This lobby has ended.');
     Object.assign(doc, values);
     return doc;
   }
 
-  async function currentLobby(lobbyId, guild, channel) {
-    const doc = await Lobby.findOne({ _id: lobbyId, guild: guild.id, started: true });
+  async function currentLobby(lobbyId, guild, channel, completedSubmission = false) {
+    const doc = await Lobby.findOne({ _id: lobbyId, guild: guild.id, ...(completedSubmission ? {} : { started: true }) });
     if (!doc) throw new Error('This lobby has ended.');
+    if (completedSubmission && doc.tournamentId && doc.completed && doc.finished
+      && doc.scoringChannelId === channel.id) return doc;
+    if (!doc.started) throw new Error('This lobby has ended.');
     const room = await Room.findOne({ guild: guild.id, lobby: doc._id });
     if (!room || doc.scoringChannelId !== channel.id || channel.name.toLowerCase() !== `lobby-room-${room.number}`) {
       throw new Error('Use scoring in this lobby\'s current room.');
@@ -95,13 +100,13 @@ function createLobbyScoring({
     return doc;
   }
 
-  async function locked(lobbyId, guild, channel, userId, work, requireEnabled = true, acknowledged = null) {
+  async function locked(lobbyId, guild, channel, userId, work, requireEnabled = true, acknowledged = null, completedSubmission = false) {
     return withRoomLock(guild.id, async () => {
       if (acknowledged) {
         const error = await acknowledged;
         if (error) throw error;
       }
-      const doc = await currentLobby(lobbyId, guild, channel);
+      const doc = await currentLobby(lobbyId, guild, channel, completedSubmission);
       if (doc.scorekeeperId !== userId) throw new Error('Only the selected scorekeeper can use this.');
       if (!eligible(doc)) throw new Error('Button scoring is not available for this lobby format.');
       if (requireEnabled && !doc.scoringEnabled) throw new Error('Enable **High IQ Scoring** from the scorekeeper announcement first.');
@@ -122,7 +127,7 @@ function createLobbyScoring({
   }
 
   function endBlockReason(doc) {
-    if (!doc.started || !doc.scoringEnabled) return null;
+    if ((!doc.started && !doc.completed) || !doc.scoringEnabled) return null;
     if (doc.scoringRecoveryId) return 'Restore the scoring backup with the recovery button before ending this lobby.';
     let completed = 0;
     try {
@@ -384,8 +389,20 @@ function createLobbyScoring({
     const offer = submissionOffers.get(idOf(doc));
     if (!offer || offer.closed) return;
     offer.closed = true;
+    if (doc.tournamentId) await update(doc, { submissionOfferClosed: true });
     await offer.message.edit({ content, components: submissionButtons(doc, true), allowedMentions: { parse: [] } })
       .catch((error) => log('Could not update the score submission prompt:', error));
+  }
+
+  async function restoreSubmissionOffer(doc, channel) {
+    if (submissionOffers.has(idOf(doc)) || !doc.tournamentId || !doc.submissionOfferId) return;
+    try {
+      const message = await fetchMessage(doc, channel, doc.submissionOfferId);
+      submissionOffers.set(idOf(doc), { message, sourceId: doc.submissionOfferSourceId,
+        channelId: doc.submissionOfferChannelId, closed: doc.submissionOfferClosed });
+    } catch (error) {
+      if (error.code !== 10008) throw error;
+    }
   }
 
   async function offerSubmission(doc, channel) {
@@ -396,6 +413,7 @@ function createLobbyScoring({
         ? 'Scores were re-saved after submission. Check the existing submission with staff:' : 'Scores already submitted:'} ${submissionLink(doc, submitted)}`);
       return;
     }
+    await restoreSubmissionOffer(doc, channel);
     const previous = submissionOffers.get(idOf(doc));
     if (previous && previous.sourceId === doc.scoringMessageId) return;
     await closeSubmissionOffer(doc, 'The saved scores changed. Use the latest submission prompt.');
@@ -406,6 +424,9 @@ function createLobbyScoring({
       components: submissionButtons(doc), allowedMentions: { parse: [] },
     });
     submissionOffers.set(idOf(doc), { message, sourceId: doc.scoringMessageId, channelId: destination.id, closed: false });
+    if (doc.tournamentId) await update(doc, { submissionOfferId: message.id,
+      submissionOfferSourceId: doc.scoringMessageId, submissionOfferChannelId: destination.id,
+      submissionOfferClosed: false });
   }
 
   async function tryOfferSubmission(doc, channel) {
@@ -417,6 +438,7 @@ function createLobbyScoring({
 
   async function submitScores(doc, channel, messageId, manual) {
     if (!doc.ranked) throw new Error('Automatic submission is only available for ranked lobbies using High IQ Scoring.');
+    await restoreSubmissionOffer(doc, channel);
     const offer = submissionOffers.get(idOf(doc));
     if (!offer || offer.message.id !== messageId || offer.closed || offer.sourceId !== doc.scoringMessageId) {
       throw new Error('This score submission prompt is no longer current. Use `!l score` to continue.');
@@ -434,7 +456,7 @@ function createLobbyScoring({
     }
     const destination = await getSubmissionChannel(doc.guild);
     if (!destination || destination.id !== offer.channelId) throw new Error('The results-submissions channel is unavailable. Submit scores manually or ask staff to check the channel.');
-    const table = await loadTable(doc, channel);
+    const table = doc.tournamentId && doc.completed ? validate(doc, doc.scoringBackup) : await loadTable(doc, channel);
     if (!table) throw new Error('Restore the scoring backup before submitting scores.');
     if (table.races !== doc.trackCount) throw new Error('Save every race or round before submitting scores.');
     const text = table.lines.join('\n');
@@ -494,12 +516,13 @@ function createLobbyScoring({
       const room = await Room.findOne({ guild: doc.guild, lobby: doc._id });
       if (!room || channel.name.toLowerCase() !== `lobby-room-${room.number}`) return;
       // Persist the accepted human ID, not whichever reaction user happens to be cached last.
-      await update(current, { scorekeeperId: userId });
-      const components = eligible(current) && current.scoringTemplateMessageId
+      await update(current, { scorekeeperId: userId, ...(current.tournamentId ? { scoringEnabled: true } : {}) });
+      const components = !current.tournamentId && eligible(current) && current.scoringTemplateMessageId
         ? [row(button(control(current, 'activate'), 'Enable High IQ Scoring'))] : [];
       const announcement = await channel.send({
         content: `${mention(userId)} has volunteered to do scores.${
-          components.length ? '\nScore like you used to, or try new **High IQ Scoring** with button below.' : ''}`,
+          current.tournamentId ? '\n**High IQ Scoring** enabled. Use `!l score` to enter scores.'
+            : components.length ? '\nScore like you used to, or try new **High IQ Scoring** with button below.' : ''}`,
         components,
         allowedMentions: { users: [userId] },
       });
@@ -912,7 +935,7 @@ function createLobbyScoring({
           if (match[2] === 'restore') return restore(doc, channel, interaction.message.id);
           if (['submit', 'submitmanual'].includes(match[2])) return submitScores(doc, channel, interaction.message.id, match[2] === 'submitmanual');
           return editPanel(doc, channel, interaction.message.id, match[2], match[3], interaction.values);
-        }, match[2] !== 'activate', acknowledged);
+        }, match[2] !== 'activate', acknowledged, ['submit', 'submitmanual'].includes(match[2]));
     } catch (error) {
       log('Could not process scoring button:', error);
       if (interaction.reply.has) {

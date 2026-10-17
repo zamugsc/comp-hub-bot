@@ -211,6 +211,13 @@ const Lobby = new Schema({
   tournamentGroups: { type: [[String]], default: [] },
   tournamentTracks: { type: [String], default: [] },
   tournamentRoundReady: { type: Boolean, default: false },
+  ffaManaged: { type: Boolean, default: false },
+  ffaOriginalPlayers: { type: [String], default: [] },
+  ffaSeeds: { type: [{ discordId: String, rating: Number }], default: [] },
+  ffaRound: { type: Number, default: 0 },
+  ffaPhase: { type: String, default: null },
+  ffaGroups: { type: [[String]], default: [] },
+  ffaTracks: { type: [String], default: [] },
   tournamentPermissionRemovals: [{ playerId: String, removeAt: Date, roomNumber: Number }],
   closed: {
     type: Boolean,
