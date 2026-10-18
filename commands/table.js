@@ -7,7 +7,11 @@ module.exports = {
   guildOnly: true,
   aliases: ['t'],
   // eslint-disable-next-line consistent-return
-  execute(message) {
+  async execute(message, args = []) {
+    if ((args[0] || '').toLowerCase() === 'import') {
+      const match = message.content.match(/^\S+[ \t]+import\b[ \t]*(?:\r?\n)?([\s\S]*)$/i);
+      return message.client.commands.get('lobby').importScores(message, match ? match[1] : '');
+    }
     const rows = message.content.split('\n');
     rows.shift();
 

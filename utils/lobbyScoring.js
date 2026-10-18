@@ -1,7 +1,7 @@
 const defaultBuilders = require('discord-buttons');
 const { randomBytes } = require('crypto');
 const {
-  readTemplate, extractTemplate, scoreRace, raceAwards, penaltyDeduction, rankGroups, ordinal,
+  readTemplate, readImport, extractTemplate, scoreRace, raceAwards, penaltyDeduction, rankGroups, ordinal,
 } = require('./scoreTable');
 
 // Same team order as generateTemplate's blue, red, green and yellow colors.
@@ -646,6 +646,68 @@ function createLobbyScoring({
     }
   }
 
+  async function importScores(message, text) {
+    try {
+      const number = message.channel.name.match(/^lobby-room-(\d+)$/i);
+      const room = number && await Room.findOne({ guild: message.guild.id, number: Number(number[1]) });
+      if (!room || !room.lobby) throw new Error('Use `!t import` in the active lobby room whose scores you want to import.');
+      return await withRoomLock(message.guild.id, async () => {
+        const doc = await currentLobby(String(room.lobby), message.guild, message.channel);
+        if (doc.scorekeeperId !== message.author.id && !(message.member && message.member.isStaff())) {
+          throw new Error('Only the selected scorekeeper or staff can import scores.');
+        }
+        if (!doc.scorekeeperId) throw new Error('Select a scorekeeper before importing scores.');
+        if (!eligible(doc)) throw new Error('High IQ Scoring is not available for this lobby format.');
+        const preparing = needsExternalSetup(doc);
+        let roster = doc.scoringRoster || [];
+        if (preparing) {
+          roster = [];
+          for (const discordId of doc.players) {
+            const player = await Player.findOne({ discordId });
+            if (!player) throw new Error('A scoring player record is missing.');
+            roster.push({ discordId, name: player.rankedName });
+          }
+        } else if (roster.length !== doc.players.length) throw new Error('This lobby\'s scoring roster is missing. Ask staff to check its setup.');
+        const teams = /_(?:duos|3v3|4v4)$/.test(doc.type) ? doc.teamList : [];
+        if (!Array.isArray(teams)) throw new Error('This lobby\'s team assignments are missing.');
+        const table = readImport(text, roster, doc.trackCount, teams);
+        const next = table.races < doc.trackCount
+          ? ` Next: **${raceTitle(doc)} ${table.races + 1}**. Use \`!l score\` to continue.`
+          : ' All scores are filled. Double-check them before submitting.';
+        const posted = await postResults(doc, message.channel, table.lines.join('\n'),
+          `Imported **${table.races}/${doc.trackCount} ${raceWord(doc)}s**.${next}`);
+        const oldPanel = doc.scoringPanelId;
+        const oldControls = [doc.scoringOfferId, doc.scoringRecoveryId].filter(Boolean);
+        const values = { scoringEnabled: true, scoringOfferId: null, scoringPanelId: null, scoringRecoveryId: null,
+          scoringMessageId: table.races ? posted.id : null, scoringBackup: extractTemplate(posted) };
+        if (!table.races || preparing) values.scoringTemplateMessageId = posted.id;
+        if (preparing) Object.assign(values, { scoringChannelId: message.channel.id, scoringRoster: table.roster,
+          scoringTracks: Array.from({ length: doc.trackCount }, (_, i) => `Track ${i + 1}`) });
+        if (doc.tournamentId) Object.assign(values, { finished: false, qualifiers: [] });
+        try { await update(doc, values); } catch (error) {
+          await posted.delete().catch((cleanup) => log('Could not remove the uncommitted import:', cleanup));
+          throw error;
+        }
+        penaltyHistory.delete(idOf(doc));
+        await deletePanel(doc, message.channel, oldPanel);
+        for (const messageId of oldControls) {
+          try {
+            await (await fetchMessage(doc, message.channel, messageId)).edit({
+              content: 'Scoring was replaced by an imported table. Use `!l score` to continue.',
+              components: [], allowedMentions: { parse: [] },
+            });
+          } catch (error) { if (error.code !== 10008) log('Could not close the previous scoring controls:', error); }
+        }
+        try {
+          await restoreSubmissionOffer(doc, message.channel);
+          await closeSubmissionOffer(doc, 'Scores were replaced by an import. Use the latest saved scores.');
+        } catch (error) { log('Could not close the previous submission prompt:', error); }
+        if (table.races === doc.trackCount) await tryOfferSubmission(doc, message.channel);
+        return posted;
+      });
+    } catch (error) { return message.channel.warn(error.message); }
+  }
+
   function showHelp(guildId, channel) {
     const staff = getStaffRole(guildId);
     return channel.send({
@@ -659,6 +721,7 @@ function createLobbyScoring({
         'Press **Undo ↩️** to undo one score from current race',
         'Press **Reset ❌** to undo all scores from current race',
         'Use `!l score edit #` to edit a previous race. Replace `#` with race number',
+        'Scorekeeper or staff: use `!t import` or `!table import` followed by the raw table to replace saved scores and resume from its progress',
         '',
         'If you have ties, press **Tie ⚖️** to start selecting tied players',
         'Press **Tie done** when you are done selecting tied players',
@@ -1053,7 +1116,7 @@ function createLobbyScoring({
   }
 
   return {
-    initialise, selectScorekeeper, command, changeScorekeeper, handleButton, handleMenu, eligible, setTracks, endBlockReason, forgetSubmission,
+    initialise, selectScorekeeper, command, importScores, changeScorekeeper, handleButton, handleMenu, eligible, setTracks, endBlockReason, forgetSubmission,
   };
 }
 

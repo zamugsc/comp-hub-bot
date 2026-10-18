@@ -36,7 +36,7 @@ function readTemplate(text, roster = null, initial = false) {
   }
   if (initial) {
     if (rows.some((row) => row.cells.some((cell) => !/^0+$/.test(cell)))) {
-      throw new Error('The startup template already contains scores. Mid-match importing is not supported.');
+      throw new Error('The startup template already contains scores. Use `!t import` with the raw table to import manual scores.');
     }
     rows.forEach((row) => { row.scores = []; row.cells = []; });
   }
@@ -48,6 +48,75 @@ function extractTemplate(message) {
     .filter(Boolean).flatMap((text) => [...text.matchAll(/```(?:\w+\n)?([\s\S]*?)```/g)].map((match) => match[1].trim()));
   if (blocks.length !== 1) throw new Error('The results message must contain exactly one score template.');
   return blocks[0];
+}
+
+// Import alone infers unfinished races from trailing blank/zero placeholders.
+// Saved High IQ tables continue to count every committed column, including zeros.
+function readImport(text, roster, maxRaces, teams = []) {
+  if (typeof text !== 'string' || !text.trim()) throw new Error('Paste the raw score table after `!t import`.');
+  if (!Number.isSafeInteger(maxRaces) || maxRaces < 1) throw new Error('This lobby has an invalid race count.');
+  text = text.replace(/\r/g, '').trim();
+  if (text.startsWith('```')) text = extractTemplate({ content: text });
+  if (text.includes('```')) throw new Error('Paste exactly one raw score table.');
+  const lines = text.split('\n').map((line) => line.trim());
+  const rows = [];
+  const groups = [];
+  for (const [index, line] of lines.entries()) {
+    if (!line || line.startsWith('#')) continue;
+    const matches = roster.flatMap((player) => {
+      const name = player.prefix || player.name;
+      if (line !== name && !line.startsWith(`${name} `) && !line.startsWith(`${name}\t`)) return [];
+      let suffix = line.slice(name.length).trim();
+      let prefix = name;
+      if (!player.prefix) {
+        const flag = suffix.match(/^\[[^\]]+\](?:\s+|$)/);
+        if (flag) { prefix += ` ${flag[0].trim()}`; suffix = suffix.slice(flag[0].length).trim(); }
+      }
+      if (suffix && !/^[\d\s|\-]+$/.test(suffix)) return [];
+      return [{ ...player, prefix, cells: suffix ? suffix.split('|').map((cell) => cell.trim()) : [], index }];
+    });
+    if (matches.length > 1) throw new Error('Player names in this table are ambiguous. Use the original lobby template.');
+    if (matches.length) {
+      const entry = matches[0];
+      if (entry.cells.some((cell) => cell && !/^\d+(?:-\d+)?$/.test(cell))) {
+        throw new Error('Invalid race columns: use scores such as 9 or 9-4 separated by |.');
+      }
+      rows.push(entry);
+      if (groups.length) groups[groups.length - 1].push(entry.discordId);
+      continue;
+    }
+    if (/^.+\s+#[a-f\d]{3}(?:[a-f\d]{3})?$/i.test(line) || /^Team\s+\S+/i.test(line)) {
+      groups.push([]);
+    } else if (!rows.length && !groups.length && index === lines.findIndex((entry) => entry && !entry.startsWith('#'))
+      && !/\s+[\d|][\d|\-\s]*$/.test(line)) {
+      // An optional plain title precedes the player/team rows.
+    } else throw new Error('The imported table contains an unknown player or invalid row. Use this lobby\'s template.');
+  }
+  if (rows.length !== roster.length || new Set(rows.map((entry) => entry.discordId)).size !== roster.length) {
+    throw new Error('The imported table must contain every lobby player exactly once.');
+  }
+  const teamKey = (members) => members.slice().sort().join(',');
+  const expected = teams.filter((team) => team.length).map(teamKey).sort();
+  const actual = groups.map(teamKey).sort();
+  if (expected.length !== actual.length || expected.some((team, i) => team !== actual[i])) {
+    throw new Error('The imported table\'s teams do not match this lobby. Keep the original team assignments.');
+  }
+  const columns = rows[0].cells.length;
+  if (rows.some((entry) => entry.cells.length !== columns)) throw new Error('Every player must have the same number of race columns.');
+  if (columns > maxRaces) throw new Error('The imported table contains more race columns than this lobby allows.');
+  const filled = Array.from({ length: columns }, (_, i) => rows.some((entry) => entry.cells[i] && !/^0+$/.test(entry.cells[i])));
+  const races = filled.lastIndexOf(true) + 1;
+  if (filled.slice(0, races).includes(false)) throw new Error('An unplayed race column appears before a filled one. Fill races in order.');
+  if (rows.some((entry) => entry.cells.slice(0, races).includes(''))) {
+    throw new Error('A played race contains an empty player score. Complete that column before importing.');
+  }
+  rows.forEach((entry) => {
+    const cells = races ? entry.cells.slice(0, races) : Array(maxRaces).fill('0');
+    lines[entry.index] = `${entry.prefix} ${cells.join('|')}`;
+  });
+  const resolved = rows.map(({ discordId, name, prefix }) => ({ discordId, name, prefix }));
+  const table = readTemplate(lines.join('\n'), resolved, races === 0);
+  return { ...table, roster: resolved };
 }
 
 // Racing skips positions occupied by a tie; battle advances by one group.
@@ -122,5 +191,5 @@ function ordinal(number) {
 }
 
 module.exports = {
-  readTemplate, extractTemplate, scoreRace, raceAwards, penaltyDeduction, rankGroups, ordinal,
+  readTemplate, readImport, extractTemplate, scoreRace, raceAwards, penaltyDeduction, rankGroups, ordinal,
 };

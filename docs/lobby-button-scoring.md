@@ -10,8 +10,8 @@ also pings the scorekeeper with the guide below. Choosing manual scoring keeps t
 normal score-template workflow. In every supported format, the selected scorekeeper
 can still run `!l score` after choosing manual scoring: it enables High IQ Scoring
 and opens the scoring panel immediately. Further calls resume the current entry.
-The saved scoring setup and scores are preserved; already edited manual templates
-are not automatically imported. Previously posted scoring-choice buttons remain
+The saved scoring setup and scores are preserved; use `!t import` below to explicitly
+import an edited manual template. Previously posted scoring-choice buttons remain
 compatible. Message prose uses **High IQ Scoring**;
 button labels use plain text. Tournaments, survival and 1v1 retain manual scoring. Default formats:
 
@@ -218,7 +218,30 @@ message, bypassing the local message cache, and validates it against the saved r
 The database also retains the latest successfully saved template as a recovery copy.
 Missing or malformed messages pause scoring and offer **Restore scores from backup**.
 Only the scorekeeper can confirm; recovery reposts the text and image and updates the
-reference. It never silently uses a backup. Manual edits on Lorenzi are not imported.
+reference. It never silently uses a backup. Manual edits on Lorenzi require an explicit import.
+
+Use `!t import` or `!table import` in the active lobby room to replace its scoring
+record with a raw table. Paste the table immediately after `import` or on the lines
+below it; a single code block is also accepted. Only the selected scorekeeper or
+staff, as recognized by the existing Staff role check, can import. Staff imports
+keep the current scorekeeper in charge, and a scorekeeper must already be selected.
+
+The table must contain the same players, flags and team assignments, with equal
+column counts and no more columns than the lobby's configured race count. Trailing
+columns that are entirely blank or zero are unplayed and removed from the imported
+progress. Individual zero scores and penalty expressions such as `10-4` are kept
+inside completed races. Empty races before a later filled race, and blank player
+scores inside a played race, are rejected. An entirely unfilled table resets scoring
+to Race 1; a complete import offers the usual optional score submission.
+
+An import enables High IQ Scoring, replaces the saved scores and recovery backup,
+and discards the unfinished panel, even if it moves progress backwards. The bot
+posts the imported table and reports the race count and next entry; `!l score`
+continues from there. FFA tournament imports affect only the active game and withdraw
+its previous finish confirmation and qualifiers for checking again. Existing published
+ranked submissions retain their reference and use the usual correction notice.
+Invalid imports and failed renders, sends or database writes leave previous progress
+and unfinished entries intact.
 
 Renderer/send/database failures retain the current entry for retry. A failed database
 write after posting may leave an extra result snapshot in chat; it does not append a
