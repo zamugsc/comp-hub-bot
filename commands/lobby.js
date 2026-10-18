@@ -1444,8 +1444,23 @@ ${playersText}`,
                       roomChannel.info(`Report any rule violations to ranked staff by sending a DM to <@!${config.bot_user_id}>.`);
                     }
 
+                    const highIqAvailable = Boolean(doc.scoringTemplateMessageId && lobbyScoring.eligible(doc));
                     // eslint-disable-next-line no-shadow
-                    roomChannel.info('Select a scorekeeper. The scorekeeper can react to this message to make others aware that he is keeping scores. If nobody reacts to this message within 5 minutes the lobby will be ended automatically.').then((m) => {
+                    roomChannel.send({
+                      embed: {
+                        color: doc.getColor(),
+                        title: 'Select a scorekeeper.',
+                        description: [
+                          highIqAvailable ? 'React below to volunteer and choose your scoring method:'
+                            : 'React below to volunteer to keep scores:',
+                          '✅ — **Manual scoring** using the old score template editing',
+                          ...(highIqAvailable ? ['☑️ — **High IQ Scoring** using the bot’s new scoring panel'] : []),
+                          '',
+                          'The first player from this lobby to react becomes the scorekeeper.',
+                          'If no player volunteers within **5 minutes**, the lobby will end automatically.',
+                        ].join('\n'),
+                      },
+                    }).then((m) => {
                       let reacted = false;
 
                       setTimeout(() => {
@@ -1454,19 +1469,21 @@ ${playersText}`,
                         }
                       }, 240000);
 
-                      m.react('✅');
-
                       let selectedScorekeeper;
+                      let selectedScoringMethod;
                       const filter = (r, u) => {
-                        if (r.emoji.name !== '✅' || !doc.players.includes(u.id) || u.bot || selectedScorekeeper) return false;
+                        const method = r.emoji.name === '✅' ? 'manual'
+                          : highIqAvailable && ['☑️', '☑'].includes(r.emoji.name) ? 'highiq' : null;
+                        if (!method || !doc.players.includes(u.id) || u.bot || selectedScorekeeper) return false;
                         selectedScorekeeper = u.id;
+                        selectedScoringMethod = method;
                         return true;
                       };
                       const options = { maxUsers: 1, time: 300000, errors: ['time'] };
 
                       m.awaitReactions(filter, options).then(async () => {
                         reacted = true;
-                        await lobbyScoring.selectScorekeeper(doc, roomChannel, selectedScorekeeper);
+                        await lobbyScoring.selectScorekeeper(doc, roomChannel, selectedScorekeeper, selectedScoringMethod);
                         await m.delete();
                       }).catch((error) => {
                         if (reacted) {
@@ -1478,6 +1495,7 @@ ${playersText}`,
                         m.delete();
                         roomChannel.warn('The lobby was ended automatically because nobody volunteered to keep scores.');
                       });
+                      m.react('✅').then(() => (highIqAvailable ? m.react('☑️') : null)).catch(console.error);
                     });
 
                     if (doc.isDrafting()) {

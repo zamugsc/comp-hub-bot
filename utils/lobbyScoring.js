@@ -510,26 +510,37 @@ function createLobbyScoring({
     });
   }
 
-  async function selectScorekeeper(doc, channel, userId) {
+  async function selectScorekeeper(doc, channel, userId, method = null) {
     await withRoomLock(doc.guild, async () => {
       const current = await Lobby.findOne({ _id: doc._id, started: true });
       if (!current || !current.players.includes(userId)) return;
       if (current.scorekeeperId && current.scorekeeperId !== userId) return;
       const room = await Room.findOne({ guild: doc.guild, lobby: doc._id });
       if (!room || channel.name.toLowerCase() !== `lobby-room-${room.number}`) return;
+      const chosen = method === 'manual' || method === 'highiq';
+      if (current.tournamentId && method === 'manual') throw new Error('High IQ Scoring is required for this tournament game.');
+      if (method === 'highiq' && (!eligible(current) || !current.scoringTemplateMessageId)) {
+        throw new Error('High IQ Scoring is not available for this lobby format.');
+      }
+      const selection = { scorekeeperId: userId };
+      if (chosen) Object.assign(selection, { scoringEnabled: method === 'highiq', scoringOfferId: null });
+      if (current.tournamentId) selection.scoringEnabled = true;
       // Persist the accepted human ID, not whichever reaction user happens to be cached last.
-      await update(current, { scorekeeperId: userId, ...(current.tournamentId ? { scoringEnabled: true } : {}) });
-      const components = !current.tournamentId && eligible(current) && current.scoringTemplateMessageId
+      await update(current, selection);
+      // Retain support for older callers and already-posted button choices.
+      const components = !chosen && !current.tournamentId && eligible(current) && current.scoringTemplateMessageId
         ? [row(button(control(current, 'activate'), 'Use High IQ Scoring', false, 'green'),
           button(control(current, 'manual'), 'Keep manual scoring'))] : [];
       const announcement = await channel.send({
         content: `${mention(userId)} has volunteered to do scores.${
-          current.tournamentId ? '\n**High IQ Scoring** enabled. Use `!l score` to enter scores.'
+          method === 'manual' ? '\n**Manual scoring** selected. Use the score template as usual.'
+            : current.tournamentId ? '\n**High IQ Scoring** enabled. Use `!l score` to enter scores.'
             : components.length ? '\nWould you like to use **High IQ Scoring**, or keep manual scoring?' : ''}`,
         components,
         allowedMentions: { users: [userId] },
       });
-      await update(current, { scoringOfferId: announcement.id });
+      if (!chosen) await update(current, { scoringOfferId: announcement.id });
+      if (method === 'highiq') await channel.send(activationGuide(current));
     });
   }
 
