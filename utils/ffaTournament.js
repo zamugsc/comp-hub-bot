@@ -1,6 +1,6 @@
 const AsyncLock = require('async-lock');
 const { seedGames, nextGames, scoreOrder } = require('./ffaBracket');
-const { readTemplate } = require('./scoreTable');
+const { readTemplate, ordinal } = require('./scoreTable');
 const { rulesets } = require('../db/rulesets');
 const { engineStyles } = require('../db/engine_styles');
 
@@ -297,6 +297,7 @@ function createFfaTournament({ Lobby, Game, Room, Sequence, Player, Rank, client
           return message.channel.info('The saved round is ready. Play it before confirming qualifiers.');
         }
         let finalWinner;
+        let tieBreaks = '';
         await withRoomLock(message.guild.id, async () => {
           const game = await Game.findOne({ _id: initial._id, started: true });
           parent = await activeParent(initial.tournamentId);
@@ -310,7 +311,13 @@ function createFfaTournament({ Lobby, Game, Room, Sequence, Player, Rank, client
           if (finalEnd && !game.final) throw new Error('Use `!l advance` to confirm this group. To cancel the event, delete its signup message.');
           const blocked = scoring.endBlockReason(game);
           if (blocked) throw new Error(blocked);
-          const order = scoreOrder(game, readTemplate);
+          const order = scoreOrder(game, readTemplate, { nextRoundFinal: parent.ffaGroups.length === 2 });
+          tieBreaks = order.slice(0, game.final ? 1 : 4).flatMap((entry, index) => {
+            const next = order[index + 1];
+            if (!next || entry.total !== next.total || !entry.placementCounts || !next.placementCounts) return [];
+            const place = entry.placementCounts.findIndex((count, position) => count !== next.placementCounts[position]);
+            return place < 0 ? [] : [`\nTie broken: <@${entry.discordId}> ahead of <@${next.discordId}> on ${ordinal(place + 1)} places (${entry.placementCounts[place]} vs ${next.placementCounts[place]}).`];
+          }).join('');
           const qualifiers = order.slice(0, game.final ? 1 : 4).map((entry) => entry.discordId);
           const mentions = message.mentions.users.map((user) => user.id);
           if ((!finalEnd || mentions.length) && (mentions.length !== qualifiers.length
@@ -325,10 +332,10 @@ function createFfaTournament({ Lobby, Game, Room, Sequence, Player, Rank, client
           }
         });
         if (finalWinner) {
-          await message.channel.success(`The winner of the tournament is <@${finalWinner}>!`);
+          await message.channel.success(`The winner of the tournament is <@${finalWinner}>!${tieBreaks}`);
           return endTournament(parent, message);
         }
-        await message.channel.success('This game is confirmed. The next round starts when every group is confirmed.');
+        await message.channel.success(`This game is confirmed. The next round starts when every group is confirmed.${tieBreaks}`);
         await overview(parent._id).catch((error) => log('Could not refresh tournament overview:', error));
         await transition(parent._id);
       });

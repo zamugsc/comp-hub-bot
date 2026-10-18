@@ -53,9 +53,18 @@ In each game room, its scorekeeper or staff confirms
 the finish with `!l advance @p1 @p2 @p3 @p4`. The mentions confirm the four
 qualifiers; their order does not establish finishing positions. Positions come
 from the saved High IQ scores. Every configured race must be saved, with no
-unfinished correction or recovery. A tie affecting qualifying positions pauses
-advancement until the organizer tie rule is implemented; no automatic
-tiebreaker is invented.
+unfinished correction or recovery. Equal totals use placement countback from
+that game's races: more first places wins, then more seconds, continuing through
+eighths. Multi-player ties use the same comparison, preserving any order already
+established at an earlier placement. Point deductions affect totals but not
+placement counts (`9-4` counts as first); forced-last counts as eighth, with other
+players counted at their adjusted positions. Shared race placements count for
+each tied player. Confirmations explain the placement count that broke a tie.
+
+When the next round is the final (16 to 8), ties entirely within the top four do
+not need resolving. A cutoff tie uses countback, as do earlier bracket positions
+and the final winner. Identical counts at every placement still block whenever
+the unresolved order matters; the organizer special tie rule is deferred.
 
 The bot waits for every game in the round to be confirmed, then creates the next
 round automatically. Opening a correction or changing a confirmed game's saved
