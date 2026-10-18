@@ -44,7 +44,7 @@ games. New rounds start with fresh scoring records and new scorekeeper prompts.
 Every game in a round receives the same generated track list and tournament
 settings. A round's track list stays fixed.
 
-In each game room, its scorekeeper, the tournament creator or staff confirms
+In each game room, its scorekeeper or staff confirms
 the finish with `!l advance @p1 @p2 @p3 @p4`. The mentions confirm the four
 qualifiers; their order does not establish finishing positions. Positions come
 from the saved High IQ scores. Every configured race must be saved, with no
@@ -57,7 +57,10 @@ round automatically. Opening a correction or changing a confirmed game's saved
 scores withdraws that confirmation while the round is still active.
 
 In the final room, use `!l end` or `!l advance @winner`, with the same scoring and
-permission checks. Every ranked game in every round gets its own optional
+permission checks. Creating the tournament does not grant finish-confirmation
+permission; its creator must also be that game's scorekeeper or staff.
+The final saved-race message repeats the relevant finish command.
+Every ranked game in every round gets its own optional
 results-submission prompt. Submission does not block advancement. Old prompts
 remain usable after room reuse or bot restart, including after the event ends;
 completed game records are retained separately from the signup lobby.

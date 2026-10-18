@@ -252,9 +252,12 @@ function createFfaTournament({ Lobby, Game, Room, Sequence, Player, Rank, client
         const closing = await Lobby.findOne({ _id: initial.tournamentId, started: true,
           ffaPhase: { $in: ['ending', 'cancelled'] } });
         if (closing) {
-          if (message.author.id !== closing.creator && !message.member.isStaff()
-            && !(closing.ffaPhase === 'ending' && message.author.id === initial.scorekeeperId)) {
-            throw new Error('Only the tournament creator or staff can retry cleanup.');
+          const canRetry = message.member.isStaff() || (closing.ffaPhase === 'ending'
+            ? message.author.id === initial.scorekeeperId : message.author.id === closing.creator);
+          if (!canRetry) {
+            throw new Error(closing.ffaPhase === 'ending'
+              ? 'Only this game\'s scorekeeper or staff can retry finishing the tournament.'
+              : 'Only the tournament creator or staff can retry cleanup.');
           }
           return closing.ffaPhase === 'ending' ? endTournament(closing, message) : cancelTournament(closing);
         }
@@ -273,8 +276,8 @@ function createFfaTournament({ Lobby, Game, Room, Sequence, Player, Rank, client
             lobby: initial.tournamentId, tournamentGame: game._id });
           if (!game || !parent || !assigned || game.round !== parent.ffaRound
             || game.scoringChannelId !== message.channel.id) throw new Error('This game is no longer active.');
-          if (message.author.id !== game.scorekeeperId && message.author.id !== parent.creator && !message.member.isStaff()) {
-            throw new Error('Only this game\'s scorekeeper, the tournament creator or staff can confirm it.');
+          if (message.author.id !== game.scorekeeperId && !message.member.isStaff()) {
+            throw new Error('Only this game\'s scorekeeper or staff can confirm it.');
           }
           if (finalEnd && !game.final) throw new Error('Use `!l advance` to confirm this group. To cancel the event, delete its signup message.');
           const blocked = scoring.endBlockReason(game);

@@ -903,9 +903,14 @@ function createLobbyScoring({
       const text = scoreRace(table, doc.scoringRoster, state.groups, state.race,
         pointsFor(doc.type, doc.players.length), isBattle(doc), state.penalties);
       const completed = Math.max(table.races, state.race);
+      const finishReminder = completed === doc.trackCount && doc.tournamentId
+        ? `\nScorekeeper or staff: ${doc.final
+          ? 'finish the tournament here with `!l end` or `!l advance @winner`.'
+          : 'confirm the top four here with `!l advance @p1 @p2 @p3 @p4`. The next round starts after every group confirms.'}`
+        : '';
       const posted = await postResults(doc, channel, text,
         `✅ ${raceTitle(doc)} ${state.race} saved — ${mapLabel(doc, state.race)}. ${completed} / ${doc.trackCount} ${raceWord(doc)}s scored.${
-          completed === doc.trackCount ? `\nAll ${raceWord(doc)}s scored. Double-check the final scores before submitting.` : ''}`);
+          completed === doc.trackCount ? `\nAll ${raceWord(doc)}s scored. Double-check the final scores before submitting.` : ''}${finishReminder}`);
       await update(doc, {
         scoringMessageId: posted.id, scoringBackup: text, scoringPanelId: null, scoringRecoveryId: null,
       });
