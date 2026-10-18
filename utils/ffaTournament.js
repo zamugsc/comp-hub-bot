@@ -7,8 +7,15 @@ const { engineStyles } = require('../db/engine_styles');
 function createFfaTournament({ Lobby, Game, Room, Sequence, Player, Rank, client,
   scoring, withRoomLock, findRoomChannel, clearRoomMemberPermissions,
   releaseRoom, generateTracks, generateTemplate, renderOverview, removeOtherQueues, endTournament, cancelTournament,
-  builders = require('discord-buttons'), log = console.error }) {
+  log = console.error }) {
   const jobs = new AsyncLock();
+  const keeperPrompts = new Map();
+  const keeperDescription = 'One player from this game must react with ✅ to volunteer to keep scores. There is no scorekeeper timeout.';
+  function forgetKeepers(tournamentId) {
+    for (const [id, prompt] of keeperPrompts) {
+      if (String(prompt.tournamentId) === String(tournamentId)) keeperPrompts.delete(id);
+    }
+  }
   const supports = (doc) => doc.mode === 'tournament' && doc.type === 'race_ffa'
     && [16, 32, 64].includes(doc.maxPlayerCount);
   const stage = (count) => ({ 64: 'Round of 64', 32: 'Quarterfinals', 16: 'Semifinals', 8: 'Final' }[count]);
@@ -171,12 +178,16 @@ function createFfaTournament({ Lobby, Game, Room, Sequence, Player, Rank, client
         await templateMessage.pin();
       }
       if (!game.scorekeeperId) {
-        const { MessageButton, MessageActionRow } = builders;
-        await trackedSend(channel, game, 'keeperMessageId', 'scorekeeper', {
-          embed: { description: 'One player from this game must volunteer to keep scores. There is no scorekeeper timeout.' },
-          components: [new MessageActionRow().addComponent(new MessageButton().setID(`ffa:keeper:${game._id}`)
-            .setStyle('green').setLabel('Keep scores'))],
+        const prompt = await trackedSend(channel, game, 'keeperMessageId', 'scorekeeper', {
+          embed: { description: keeperDescription }, components: [],
         });
+        // Convert saved button prompts too, without creating duplicate messages on restart.
+        if (prompt.components.length || prompt.embeds[0].description !== keeperDescription) {
+          await prompt.edit({ embed: { description: keeperDescription, footer: prompt.embeds[0].footer }, components: [] });
+        }
+        keeperPrompts.set(prompt.id, { gameId: game._id, tournamentId: parent._id,
+          guildId: parent.guild, channelId: channel.id, players: new Set(game.players), selecting: false });
+        await prompt.react('✅');
       }
       await patchGame(game._id, { posted: true });
     });
@@ -219,6 +230,7 @@ function createFfaTournament({ Lobby, Game, Room, Sequence, Player, Rank, client
           ffaTracks: [], ffaPhase: 'preparing' },
       });
       await Game.updateMany({ tournamentId: id, round: parent.ffaRound }, { $set: { started: false, completed: true } });
+      forgetKeepers(id);
       shouldPrepare = true;
     });
     if (shouldPrepare) await prepare(id);
@@ -311,25 +323,36 @@ function createFfaTournament({ Lobby, Game, Room, Sequence, Player, Rank, client
     return true;
   }
 
-  async function keeper(interaction) {
-    const match = interaction.id.match(/^ffa:keeper:(.+)$/);
-    if (!match) return;
+  async function keeper(reaction, user) {
+    const prompt = keeperPrompts.get(reaction.message.id);
+    if (!prompt) return false;
+    // Reject spectators, bots and repeated reactions from memory before any API/database work.
+    if (user.bot || reaction.emoji.name !== '✅' || !prompt.players.has(user.id) || prompt.selecting
+      || reaction.message.guild.id !== prompt.guildId || reaction.message.channel.id !== prompt.channelId) return true;
+    prompt.selecting = true;
     try {
-      await interaction.reply.defer(true);
-      const game = await Game.findOne({ _id: match[1], guild: interaction.guild.id, started: true });
-      const parent = game && await activeParent(game.tournamentId);
-      if (!parent || game.round !== parent.ffaRound) throw new Error('This game has ended.');
-      if (parent.ffaPhase !== 'playing') throw new Error('Please wait until all game rooms are ready.');
-      if (interaction.message.id !== game.keeperMessageId
-        || interaction.message.channel.id !== game.scoringChannelId) throw new Error('This scorekeeper prompt is no longer current.');
-      const id = interaction.clicker.user ? interaction.clicker.user.id : interaction.clicker.id;
-      if (!game.players.includes(id)) throw new Error('Only a player in this game can volunteer to keep scores.');
-      if (game.scorekeeperId) throw new Error('This game already has a scorekeeper.');
-      await scoring.selectScorekeeper(game, interaction.message.channel, id);
+      await jobs.acquire(String(prompt.tournamentId), async () => {
+        const game = await Game.findOne({ _id: prompt.gameId, guild: prompt.guildId, started: true });
+        const parent = game && await activeParent(game.tournamentId);
+        if (!parent || game.finished || game.round !== parent.ffaRound
+          || reaction.message.id !== game.keeperMessageId || prompt.channelId !== game.scoringChannelId) {
+          keeperPrompts.delete(reaction.message.id);
+          return;
+        }
+        if (parent.ffaPhase !== 'playing' || !game.players.includes(user.id)) return;
+        if (!game.scorekeeperId) await scoring.selectScorekeeper(game, reaction.message.channel, user.id);
+        const selected = await Game.findOne({ _id: game._id });
+        if (selected && selected.scorekeeperId) {
+          keeperPrompts.delete(reaction.message.id);
+          await reaction.message.delete();
+        }
+      });
     } catch (error) {
       log('Could not select tournament scorekeeper:', error);
-      await interaction.message.channel.warn(error.message);
+    } finally {
+      prompt.selecting = false;
     }
+    return true;
   }
 
   async function close(parent) {
@@ -338,6 +361,7 @@ function createFfaTournament({ Lobby, Game, Room, Sequence, Player, Rank, client
     });
     await Game.updateMany({ tournamentId: parent._id, finished: true }, { $set: { started: false, completed: true } });
     await Game.updateMany({ tournamentId: parent._id, started: true }, { $set: { started: false } });
+    forgetKeepers(parent._id);
   }
 
   async function resume() {

@@ -40,7 +40,10 @@ at the corresponding stage, with the same opening seeded draw.
 
 Each game has its own volunteer scorekeeper and uses High IQ Scoring, with
 `!l score`, corrections, backup recovery and scorekeeper handoff as in ordinary
-games. New rounds start with fresh scoring records and new scorekeeper prompts.
+games. A player in that game volunteers by reacting ✅ to its scorekeeper prompt;
+other users' reactions are silently ignored. The prompt is deleted after selection,
+and there is no scorekeeper timeout. Saved button prompts become reaction prompts
+when an existing event resumes. New rounds start with fresh scoring records and new scorekeeper prompts.
 Every game in a round receives the same generated track list and tournament
 settings. A round's track list stays fixed.
 

@@ -3218,6 +3218,7 @@ async function mogi(reaction, user, removed = false) {
 }
 
 client.on('messageReactionAdd', async (reaction, user) => {
+  if (await ffaTournament.keeper(reaction, user)) return;
   if (reaction.partial) {
     try {
       await reaction.fetch();
@@ -3653,5 +3654,4 @@ function checkOldTeams() {
 new CronJob('* * * * *', checkOldTeams).start();
 
 client.on('clickButton', (button) => lobbyScoring.handleButton(button));
-client.on('clickButton', (button) => ffaTournament.keeper(button));
 client.on('clickMenu', (menu) => lobbyScoring.handleMenu(menu));
