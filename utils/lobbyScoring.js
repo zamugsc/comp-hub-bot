@@ -109,7 +109,9 @@ function createLobbyScoring({
       const doc = await currentLobby(lobbyId, guild, channel, completedSubmission);
       if (doc.scorekeeperId !== userId) throw new Error('Only the selected scorekeeper can use this.');
       if (!eligible(doc)) throw new Error('Button scoring is not available for this lobby format.');
-      if (requireEnabled && !doc.scoringEnabled) throw new Error('Enable **High IQ Scoring** from the scorekeeper announcement first.');
+      if (requireEnabled && !doc.scoringEnabled) throw new Error(doc.scoringOfferId
+        ? 'Enable **High IQ Scoring** from the scorekeeper announcement first.'
+        : 'Manual scoring is selected. Continue using the score template as usual.');
       return work(doc);
     });
   }
@@ -518,11 +520,12 @@ function createLobbyScoring({
       // Persist the accepted human ID, not whichever reaction user happens to be cached last.
       await update(current, { scorekeeperId: userId, ...(current.tournamentId ? { scoringEnabled: true } : {}) });
       const components = !current.tournamentId && eligible(current) && current.scoringTemplateMessageId
-        ? [row(button(control(current, 'activate'), 'Enable High IQ Scoring'))] : [];
+        ? [row(button(control(current, 'activate'), 'Use High IQ Scoring', false, 'green'),
+          button(control(current, 'manual'), 'Keep manual scoring'))] : [];
       const announcement = await channel.send({
         content: `${mention(userId)} has volunteered to do scores.${
           current.tournamentId ? '\n**High IQ Scoring** enabled. Use `!l score` to enter scores.'
-            : components.length ? '\nScore like you used to, or try new **High IQ Scoring** with button below.' : ''}`,
+            : components.length ? '\nWould you like to use **High IQ Scoring**, or keep manual scoring?' : ''}`,
         components,
         allowedMentions: { users: [userId] },
       });
@@ -766,22 +769,37 @@ function createLobbyScoring({
     });
   }
 
-  async function activate(doc, channel, messageId) {
-    if (doc.scoringOfferId !== messageId) throw new Error('This activation button is no longer current.');
-    if (doc.scoringEnabled) return '**High IQ Scoring** is already enabled. Run `!l score` to continue.';
-    await update(doc, { scoringEnabled: true });
-    const announcement = await fetchMessage(doc, channel, messageId);
-    await announcement.edit({ components: [row(button(control(doc, 'activate'), 'High IQ Scoring enabled', true))] });
+  function activationGuide(doc) {
     const staff = getStaffRole(doc.guild);
-    await channel.send({
+    return {
       content: `${mention(doc.scorekeeperId)} **High IQ Scoring** ${highIqEmoji} enabled! Use \`!l score\` to start scoring the first ${raceWord(doc)}\n`
       + 'To do scores, press player name buttons in the order of their position, then press **Save scores** ✅\n\n'
       + `Use \`!l score\` again after each ${raceWord(doc)}. To edit a previous ${raceWord(doc)}, `
       + `use \`!l score edit #\`, and replace \`#\` with the ${raceWord(doc)} number\n`
       + `Use \`!l score help\` or ping ${staff ? `<@&${staff.id}>` : '@Staff'} if you need help!`,
       allowedMentions: { parse: [], users: [doc.scorekeeperId] },
-    });
-    return '**High IQ Scoring** enabled.';
+    };
+  }
+
+  async function chooseScoring(doc, channel, messageId, enable) {
+    if (doc.scoringOfferId !== messageId) throw new Error('This scoring choice is no longer current.');
+    if (doc.tournamentId) throw new Error('High IQ Scoring is required for this tournament game.');
+    if (doc.scoringEnabled) return '**High IQ Scoring** is already enabled. Run `!l score` to continue.';
+    const announcement = await fetchMessage(doc, channel, messageId);
+    await update(doc, { scoringEnabled: enable, scoringOfferId: null });
+    try {
+      await announcement.edit({
+        content: `${mention(doc.scorekeeperId)} has volunteered to do scores.\n${enable
+          ? '**High IQ Scoring** selected.' : '**Manual scoring** selected. Use the score template as usual.'}`,
+        components: [], allowedMentions: { parse: [] },
+      });
+    } catch (error) {
+      // Keep the original choice usable if Discord could not remove its controls.
+      await update(doc, { scoringEnabled: false, scoringOfferId: messageId });
+      throw error;
+    }
+    if (enable) await channel.send(activationGuide(doc));
+    return enable ? '**High IQ Scoring** enabled.' : 'Manual scoring selected.';
   }
 
   async function restore(doc, channel, messageId) {
@@ -936,11 +954,11 @@ function createLobbyScoring({
       // Reserve the queue immediately: acknowledgements may complete out of order.
       await locked(match[1], interaction.guild, channel, interaction.clicker.id,
         async (doc) => {
-          if (match[2] === 'activate') return activate(doc, channel, interaction.message.id);
+          if (['activate', 'manual'].includes(match[2])) return chooseScoring(doc, channel, interaction.message.id, match[2] === 'activate');
           if (match[2] === 'restore') return restore(doc, channel, interaction.message.id);
           if (['submit', 'submitmanual'].includes(match[2])) return submitScores(doc, channel, interaction.message.id, match[2] === 'submitmanual');
           return editPanel(doc, channel, interaction.message.id, match[2], match[3], interaction.values);
-        }, match[2] !== 'activate', acknowledged, ['submit', 'submitmanual'].includes(match[2]));
+        }, !['activate', 'manual'].includes(match[2]), acknowledged, ['submit', 'submitmanual'].includes(match[2]));
     } catch (error) {
       log('Could not process scoring button:', error);
       if (interaction.reply.has) {

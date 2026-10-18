@@ -2,9 +2,11 @@
 
 The existing startup template and Lorenzi link remain available for manual scoring.
 The first eligible human player accepting the scorekeeper checkmark is persisted on
-the active lobby. Their announcement offers **Enable High IQ Scoring** for supported
-player counts. Activation disables the button with the label **High IQ Scoring enabled**
-and pings the scorekeeper with the guide below. Message prose uses **High IQ Scoring**;
+the active lobby. Their announcement offers **Use High IQ Scoring** and **Keep manual scoring**
+for supported player counts. Only the selected scorekeeper can choose; either choice
+removes both buttons and records the selection in that announcement. Choosing High IQ
+Scoring also pings the scorekeeper with the guide below. Choosing manual scoring keeps
+the normal score-template workflow. Message prose uses **High IQ Scoring**;
 button labels use plain text. Tournaments, survival and 1v1 retain manual scoring. Default formats:
 
 | Format | Players | Default races/arenas | Points from first to last |
