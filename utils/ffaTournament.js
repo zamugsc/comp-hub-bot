@@ -10,7 +10,15 @@ function createFfaTournament({ Lobby, Game, Room, Sequence, Player, Rank, client
   log = console.error }) {
   const jobs = new AsyncLock();
   const keeperPrompts = new Map();
-  const keeperDescription = 'One player from this game must react with ✅ to volunteer to keep scores. There is no scorekeeper timeout.';
+  const keeperDescription = [
+    'React below to volunteer to keep scores:',
+    '',
+    '☑️ — **High IQ Scoring** using the bot’s new scoring panel',
+    '',
+    'The first player from this game to react becomes the scorekeeper.',
+    '',
+    '**Note:** Only High IQ Scoring is available in tournament lobbies.',
+  ].join('\n');
   function forgetKeepers(tournamentId) {
     for (const [id, prompt] of keeperPrompts) {
       if (String(prompt.tournamentId) === String(tournamentId)) keeperPrompts.delete(id);
@@ -178,16 +186,24 @@ function createFfaTournament({ Lobby, Game, Room, Sequence, Player, Rank, client
         await templateMessage.pin();
       }
       if (!game.scorekeeperId) {
-        const prompt = await trackedSend(channel, game, 'keeperMessageId', 'scorekeeper', {
-          embed: { description: keeperDescription }, components: [],
-        });
+        const payload = { embed: { color: parent.getColor(), title: 'Select a scorekeeper.',
+          description: keeperDescription }, components: [] };
+        let prompt = await trackedSend(channel, game, 'keeperMessageId', 'scorekeeper', payload);
+        // Replace legacy green-checkmark prompts without needing permission to
+        // remove other members' reactions from the old message.
+        if (prompt.embeds[0].description !== keeperDescription && prompt.reactions.cache.has('✅')) {
+          keeperPrompts.delete(prompt.id);
+          await prompt.delete();
+          prompt = await trackedSend(channel, game, 'keeperMessageId', 'scorekeeper', payload);
+        }
         // Convert saved button prompts too, without creating duplicate messages on restart.
-        if (prompt.components.length || prompt.embeds[0].description !== keeperDescription) {
-          await prompt.edit({ embed: { description: keeperDescription, footer: prompt.embeds[0].footer }, components: [] });
+        if (prompt.components.length || prompt.embeds[0].description !== keeperDescription
+          || prompt.embeds[0].title !== 'Select a scorekeeper.') {
+          await prompt.edit({ embed: { ...payload.embed, footer: prompt.embeds[0].footer }, components: [] });
         }
         keeperPrompts.set(prompt.id, { gameId: game._id, tournamentId: parent._id,
           guildId: parent.guild, channelId: channel.id, players: new Set(game.players), selecting: false });
-        await prompt.react('✅');
+        await prompt.react('☑️');
       }
       await patchGame(game._id, { posted: true });
     });
@@ -327,7 +343,7 @@ function createFfaTournament({ Lobby, Game, Room, Sequence, Player, Rank, client
     const prompt = keeperPrompts.get(reaction.message.id);
     if (!prompt) return false;
     // Reject spectators, bots and repeated reactions from memory before any API/database work.
-    if (user.bot || reaction.emoji.name !== '✅' || !prompt.players.has(user.id) || prompt.selecting
+    if (user.bot || !['☑️', '☑'].includes(reaction.emoji.name) || !prompt.players.has(user.id) || prompt.selecting
       || reaction.message.guild.id !== prompt.guildId || reaction.message.channel.id !== prompt.channelId) return true;
     prompt.selecting = true;
     try {

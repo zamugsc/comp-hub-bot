@@ -7,7 +7,11 @@ scorekeeper, and that same reaction selects the scoring method. The prompt is de
 after selection; no separate scoring-choice buttons are posted. If nobody volunteers
 within five minutes, the ordinary lobby ends automatically. Choosing High IQ Scoring
 also pings the scorekeeper with the guide below. Choosing manual scoring keeps the
-normal score-template workflow. Previously posted scoring-choice buttons remain
+normal score-template workflow. In every supported format, the selected scorekeeper
+can still run `!l score` after choosing manual scoring: it enables High IQ Scoring
+and opens the scoring panel immediately. Further calls resume the current entry.
+The saved scoring setup and scores are preserved; already edited manual templates
+are not automatically imported. Previously posted scoring-choice buttons remain
 compatible. Message prose uses **High IQ Scoring**;
 button labels use plain text. Tournaments, survival and 1v1 retain manual scoring. Default formats:
 
@@ -55,10 +59,13 @@ or server roles are changed by scoring.
 
 For supported button-scoring formats, the current scorekeeper can use
 `!l change scorekeeper @player` in the lobby room to invite one other human lobby
-player to take over. Only that player can press
-**Accept scorekeeper duty**, within 60 seconds. The original scorekeeper retains
+player to take over. The invitation is a compact green embed that pings only the
+invited player and shows the one-minute deadline. Only that player can press
+**Accept**, within 60 seconds. Unauthorized clicks receive a private response
+visible only to the person clicking, without a public warning. The original scorekeeper retains
 control until acceptance; a timeout disables the request and leaves ownership
-unchanged.
+unchanged. Accepted, cancelled and timed-out handoffs replace the invitation text
+with their final status in the same compact embed, without pinging anyone again.
 
 Other lobby players can use the same command to nominate another human lobby player
 or themselves when the current scorekeeper is unavailable. A nomination starts a
@@ -221,8 +228,11 @@ unfinished panel cannot recover unsaved picks; the bot explicitly asks for re-en
 The actual ordered tracks are persisted at startup, on internal track-draft completion,
 and on reroll. Reroll is refused once an activated scoring workflow has an entry or a
 saved race, so tracks cannot change underneath recorded results. External track drafts
-whose selected tracks never return to the bot retain the manual workflow until a track
-list can be integrated; they do not offer activation in this version.
+also support High IQ Scoring, with **Track 1**, **Track 2**, etc. used when the selected
+names are unavailable. Internal drafts still require their selected tracks before scoring.
+For an external-draft lobby already running before this support was added, `!l score`
+can prepare scoring from its original untouched template after the pinned start message.
+It refuses ambiguous, missing or manually scored templates rather than replacing scores.
 
 Closing the active lobby deletes its backup and scoring references with the lobby
 record; they are not copied to finished-lobby statistics. Failed room cleanup keeps the

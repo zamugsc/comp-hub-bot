@@ -7,6 +7,7 @@ const {
 // Same team order as generateTemplate's blue, red, green and yellow colors.
 const teamMarkers = ['🟦', '🟥', '🟩', '🟨'];
 const highIqEmoji = '<:highiq:1560812252356026499>';
+const lowIqEmoji = '<:lowiq:1561471146367516672>';
 
 // Inject Discord/database boundaries so every flow can be exercised offline.
 function createLobbyScoring({
@@ -44,8 +45,12 @@ function createLobbyScoring({
   const externalDraft = (doc) => doc.trackOption === 'draft'
     && !['race_ffa', 'race_duos', 'race_itemless_ffa', 'race_itemless_duos'].includes(doc.type);
   const eligible = (doc) => doc.mode !== 'tournament' && doc.type !== 'race_survival'
-    && !externalDraft(doc) && Boolean(pointsFor(doc.type, doc.players.length))
+    && Boolean(pointsFor(doc.type, doc.players.length))
     && doc.players.length === pointsFor(doc.type, doc.players.length).length;
+  const needsExternalSetup = (doc) => externalDraft(doc) && eligible(doc)
+    && !doc.scoringChannelId && !doc.scoringTemplateMessageId && !doc.scoringEnabled
+    && !doc.scoringMessageId && !doc.scoringPanelId && !doc.scoringRecoveryId
+    && !doc.scoringBackup && !(doc.scoringRoster || []).length;
 
   function teamAssignments(doc) {
     const teams = new Map();
@@ -94,7 +99,8 @@ function createLobbyScoring({
       && doc.scoringChannelId === channel.id) return doc;
     if (!doc.started) throw new Error('This lobby has ended.');
     const room = await Room.findOne({ guild: guild.id, lobby: doc._id });
-    if (!room || doc.scoringChannelId !== channel.id || channel.name.toLowerCase() !== `lobby-room-${room.number}`) {
+    if (!room || (doc.scoringChannelId !== channel.id && !needsExternalSetup(doc))
+      || channel.name.toLowerCase() !== `lobby-room-${room.number}`) {
       throw new Error('Use scoring in this lobby\'s current room.');
     }
     return doc;
@@ -504,10 +510,28 @@ function createLobbyScoring({
       scoringChannelId: channel.id,
       scoringTemplateMessageId: templateMessage.id,
       scoringRoster: roster,
-      scoringTracks: tracks,
+      scoringTracks: externalDraft(doc) ? Array.from({ length: doc.trackCount }, (_, i) =>
+        tracks[i] && !['-', '*N/A*'].includes(tracks[i]) ? tracks[i] : `Track ${i + 1}`) : tracks,
       scoringBattleModes: isBattle(doc) ? battleModes : [],
       scoringBackup: text,
     });
+  }
+
+  async function prepareExternal(doc, channel) {
+    // Older external drafts skipped initialisation. Reuse only their original,
+    // untouched template, found immediately after the current pinned start.
+    const startedAt = new Date(doc.startedAt).getTime();
+    const pinned = await channel.messages.fetchPinned();
+    const starts = Array.from(pinned.values()).filter((message) => message.author.id === channel.client.user.id
+      && message.createdTimestamp >= startedAt
+      && (message.embeds || []).some((embed) => (embed.title || '').endsWith(' has started')));
+    if (starts.length !== 1) throw new Error('Could not identify this lobby\'s original start message. Continue manual scoring or ask staff to check it.');
+    const messages = await channel.messages.fetch({ after: starts[0].id, limit: 100 });
+    const templates = Array.from(messages.values()).filter((message) => message.author.id === channel.client.user.id
+      && message.createdTimestamp >= starts[0].createdTimestamp
+      && (message.embeds || []).some((embed) => embed.title === 'Score Template'));
+    if (templates.length !== 1) throw new Error('Could not identify this lobby\'s original score template. Continue manual scoring or ask staff to check it.');
+    await initialise(doc, channel, templates[0], []);
   }
 
   async function selectScorekeeper(doc, channel, userId, method = null) {
@@ -532,9 +556,10 @@ function createLobbyScoring({
         ? [row(button(control(current, 'activate'), 'Use High IQ Scoring', false, 'green'),
           button(control(current, 'manual'), 'Keep manual scoring'))] : [];
       const announcement = await channel.send({
-        content: `${mention(userId)} has volunteered to do scores.${
-          method === 'manual' ? '\n**Manual scoring** selected. Use the score template as usual.'
-            : current.tournamentId ? '\n**High IQ Scoring** enabled. Use `!l score` to enter scores.'
+        content: method === 'manual'
+          ? `**${mention(userId)}** has volunteered to do scores, using the old ${lowIqEmoji} method.`
+          : `${mention(userId)} has volunteered to do scores.${
+            current.tournamentId ? '\n**High IQ Scoring** enabled. Use `!l score` to enter scores.'
             : components.length ? '\nWould you like to use **High IQ Scoring**, or keep manual scoring?' : ''}`,
         components,
         allowedMentions: { users: [userId] },
@@ -545,9 +570,6 @@ function createLobbyScoring({
   }
 
   async function open(doc, channel, args) {
-    if (args.length && (args.length !== 2 || args[0] !== 'edit' || !/^[1-9]\d*$/.test(args[1]))) {
-      throw new Error('Use `!l score`, `!l score edit 3` or `!l score help`.');
-    }
     await recoverBattleModes(doc, channel);
     if (doc.scoringPanelId) {
       try {
@@ -592,7 +614,33 @@ function createLobbyScoring({
       const room = number && await Room.findOne({ guild: message.guild.id, number: Number(number[1]) });
       if (!room || !room.lobby) throw new Error('Use `!l score` in an active lobby room with a selected scorekeeper.');
       return await locked(String(room.lobby), message.guild, message.channel, message.author.id,
-        (current) => open(current, message.channel, args));
+        async (current) => {
+          if (args.length && (args.length !== 2 || args[0] !== 'edit' || !/^[1-9]\d*$/.test(args[1]))) {
+            throw new Error('Use `!l score`, `!l score edit 3` or `!l score help`.');
+          }
+          if (needsExternalSetup(current)) await prepareExternal(current, message.channel);
+          if (!current.scoringEnabled) {
+            if (!current.scoringTemplateMessageId || !current.scoringRoster
+              || current.scoringRoster.length !== current.players.length) {
+              throw new Error('The scoring setup is not available for this lobby. Ask staff to check its score template.');
+            }
+            const offerId = current.scoringOfferId;
+            await update(current, { scoringEnabled: true, scoringOfferId: null });
+            if (offerId) {
+              try {
+                const offer = await fetchMessage(current, message.channel, offerId);
+                await offer.edit({
+                  content: `${mention(current.scorekeeperId)} has volunteered to do scores.\n**High IQ Scoring** selected.`,
+                  components: [], allowedMentions: { parse: [] },
+                });
+              } catch (error) {
+                if (error.code !== 10008) log('Could not close the previous scoring choice:', error);
+              }
+            }
+            await message.channel.send(activationGuide(current));
+          }
+          return open(current, message.channel, args);
+        }, false);
     } catch (error) {
       return message.channel.warn(error.message);
     }
@@ -633,10 +681,12 @@ function createLobbyScoring({
     scorekeeperChanges.delete(lobbyId);
     clearTimer(pending.timer);
     if (pending.collector) pending.collector.stop('closed');
+    const voting = pending.kind === 'vote';
     await pending.message.edit({
-      content,
+      content: voting ? content : '',
+      embed: voting ? null : { color: 0x57f287, title: 'Scorekeeper handoff', description: content },
       allowedMentions: { parse: [] },
-      components: pending.kind === 'vote' ? [] : [row(button(`score:${lobbyId}:acceptkeeper`, 'Accept scorekeeper duty', true, 'green'))],
+      components: pending.kind === 'vote' ? [] : [row(button(`score:${lobbyId}:acceptkeeper`, 'Accept', true, 'green'))],
     }).catch((error) => log('Could not update scorekeeper change request:', error));
   }
 
@@ -738,9 +788,14 @@ function createLobbyScoring({
         }
         if (message.author.id !== doc.scorekeeperId) return startScorekeeperVote(doc, message, user);
         const request = await message.channel.send({
-          content: `${mention(user.id)}, ${mention(doc.scorekeeperId)} has asked you to take over scorekeeping. Accept within 1 minute.`,
+          content: mention(user.id),
+          embed: {
+            color: 0x57f287,
+            title: 'Scorekeeper handoff',
+            description: `${mention(doc.scorekeeperId)} has asked you to take over scorekeeping.\nAccept within **1 minute**.`,
+          },
           allowedMentions: { users: [user.id] },
-          components: [row(button(control(doc, 'acceptkeeper'), 'Accept scorekeeper duty', false, 'green'))],
+          components: [row(button(control(doc, 'acceptkeeper'), 'Accept', false, 'green'))],
         });
         const pending = { from: doc.scorekeeperId, to: user.id, message: request, expiresAt: now() + 60000 };
         scorekeeperChanges.set(lobbyId, pending);
