@@ -2885,16 +2885,13 @@ async function mogi(reaction, user, removed = false) {
           let teamList = Array.from(doc.teamList);
 
           if (doc.isDuos()) {
-            const userSavedDuo = await Duo.findOne({
+            // Insta signup is individual; saved premades belong to other modes.
+            const userSavedDuo = doc.isInsta() ? null : await Duo.findOne({
               guild: guild.id,
               $or: [{ discord1: user.id }, { discord2: user.id }],
             });
 
             if (userSavedDuo) {
-              if (doc.isInsta()) {
-                errors.push('The lobby does not allow premade teams.');
-              }
-
               // eslint-disable-next-line max-len
               const savedPartner = userSavedDuo.discord1 === user.id ? userSavedDuo.discord2 : userSavedDuo.discord1;
 
@@ -3030,7 +3027,7 @@ async function mogi(reaction, user, removed = false) {
             }
             doc.teamList = teamList;
           } else if (doc.isWar() && !doc.is1v1()) {
-            let team = await Team.findOne({
+            let team = doc.isInsta() ? null : await Team.findOne({
               guild: guild.id,
               players: user.id,
             });
@@ -3041,7 +3038,7 @@ async function mogi(reaction, user, removed = false) {
              * Doing this will apply the 4 vs. 4 validation to duos which
              * might not always lead to the desired result but it does the job well enough
              */
-            if (!team) {
+            if (!team && !doc.isInsta()) {
               const userSavedDuo = await Duo.findOne({
                 guild: guild.id,
                 $or: [{ discord1: user.id }, { discord2: user.id }],
@@ -3057,10 +3054,6 @@ async function mogi(reaction, user, removed = false) {
             }
 
             if (team) {
-              if (doc.isInsta()) {
-                errors.push('This lobby does not allow premade teams.');
-              }
-
               if (team.players.length > doc.getTeamSize()) {
                 errors.push('The size of your team is too big for this lobby.');
               }
