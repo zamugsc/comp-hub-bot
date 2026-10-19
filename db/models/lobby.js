@@ -717,7 +717,7 @@ Lobby.methods = {
 
     if (this.isRacing()) {
       const trackOption = trackOptions.find((t) => t.key === this.trackOption);
-      title += ` [${trackOption.name}]`;
+      title += ` [${trackOption ? trackOption.name : 'Unknown Track Pool'}]`;
     } else if (this.isBattle()) {
       if (this.isDrafting()) {
         title += ' [Arena Drafting]';

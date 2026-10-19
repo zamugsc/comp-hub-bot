@@ -1863,8 +1863,10 @@ module.exports = {
         // eslint-disable-next-line consistent-return
         return message.channel.awaitMenuChoice('Please select the mode you want to play.', message.author.id, lobbyTypes, 1).then(async (selectedType) => {
           if (!selectedType) {
-            message.delete();
-            throw new Error();
+            return message.channel.warn('Lobby creation cancelled because no game mode was selected.');
+          }
+          if (!lobbyTypes.some((type) => type.key === selectedType)) {
+            return message.channel.warn('Invalid game mode. Please create the lobby again.');
           }
 
           // Initialize lobby here to be able to use model functions
@@ -1893,9 +1895,12 @@ module.exports = {
             ];
 
             try {
-              mode = await message.channel.awaitMenuChoice('Please select the lobby mode.', message.author.id, modes, 1);
+              mode = await message.channel.awaitMenuChoice('Please select the lobby mode.', message.author.id, modes, 1, mode) || mode;
               // eslint-disable-next-line no-empty
             } catch (e) {
+            }
+            if (!modes.some((option) => option.key === mode)) {
+              return message.channel.warn('Invalid lobby mode. Please create the lobby again.');
             }
           }
 
@@ -1907,10 +1912,13 @@ module.exports = {
 
           if (lobbyTrackOptions.length > 1 && custom.includes(CUSTOM_OPTION_TRACK_POOL)) {
             try {
-              trackOption = await message.channel.awaitMenuChoice('Please select the track pool.', message.author.id, lobbyTrackOptions, 1);
+              trackOption = await message.channel.awaitMenuChoice('Please select the track pool.', message.author.id, lobbyTrackOptions, 1, trackOption) || trackOption;
               // eslint-disable-next-line no-empty
             } catch (e) {
             }
+          }
+          if (!lobbyTrackOptions.some((option) => option.key === trackOption)) {
+            return message.channel.warn('Invalid track pool. Please create the lobby again.');
           }
 
           lobby.trackOption = trackOption;
@@ -1953,14 +1961,19 @@ module.exports = {
             }
 
             try {
-              maxPlayerCount = await message.channel.awaitMenuChoice(
+              const selectedCount = await message.channel.awaitMenuChoice(
                 'Please select the maximum number of players.',
                 message.author.id,
                 playerCounts,
                 1,
+                maxPlayerCount,
               );
+              if (selectedCount !== undefined && selectedCount !== null) maxPlayerCount = Number(selectedCount);
               // eslint-disable-next-line no-empty
             } catch (e) {
+            }
+            if (!playerCounts.some((option) => option.key === maxPlayerCount)) {
+              return message.channel.warn('Invalid player count. Please create the lobby again.');
             }
           }
 
@@ -2118,7 +2131,7 @@ module.exports = {
                 [yesButton, noButton],
               );
 
-              privateChannel = (buttonId === 'yes');
+              if (buttonId === 'yes' || buttonId === 'no') privateChannel = buttonId === 'yes';
               // eslint-disable-next-line no-empty
             } catch (e) {
             }
@@ -2160,8 +2173,11 @@ module.exports = {
             ];
 
             try {
-              teamCreation = await message.channel.awaitMenuChoice('Please select the team creation method.', message.author.id, teamCreationOptions, 1);
+              teamCreation = await message.channel.awaitMenuChoice('Please select the team creation method.', message.author.id, teamCreationOptions, 1, teamCreation) || teamCreation;
             } catch (e) {
+            }
+            if (!teamCreationOptions.some((option) => option.key === teamCreation)) {
+              return message.channel.warn('Invalid team creation method. Please create the lobby again.');
             }
           }
 
@@ -2176,7 +2192,7 @@ module.exports = {
                 [yesButton, noButton],
               );
 
-              ranked = (buttonId === 'yes');
+              if (buttonId === 'yes' || buttonId === 'no') ranked = buttonId === 'yes';
               // eslint-disable-next-line no-empty
             } catch (e) {
             }
@@ -2243,7 +2259,7 @@ module.exports = {
             { upsert: true, new: true },
           );
 
-          lobby.save().then(async (doc) => {
+          return lobby.save().then(async (doc) => {
             let roles = null;
 
             if (lobby.ranked) {
@@ -2268,19 +2284,23 @@ module.exports = {
               .addComponent(leaveLobbyButton)
               .addComponent(deleteLobbyButton);
 
-            channel.send({
+            const m = await channel.send({
               content: roles,
               embed: await getEmbed(doc),
               components: [buttonRow],
-            }).then((m) => {
-              doc.channel = m.channel.id;
-              doc.message = m.id;
-              doc.save().then(() => {
-                message.channel.success(`${lobby.getTitle()} has been created. Don't forget to click on the ✅ button!`);
-              });
             });
+            doc.channel = m.channel.id;
+            doc.message = m.id;
+            await doc.save();
+            return message.channel.success(`${lobby.getTitle()} has been created. Don't forget to click on the ✅ button!`);
           });
-        }).catch(() => message.channel.error('Command cancelled.'));
+        }).catch(async (error) => {
+          // Keep the entire creation chain attached to this handler, including
+          // rendering, Discord sends and both database saves.
+          // eslint-disable-next-line no-console
+          console.error('Could not create lobby:', error);
+          await message.channel.error('Could not create the lobby. Please try again or ask staff to check the error.').catch(console.error);
+        });
 
       case 'start':
         findLobby(lobbyID, message.member.isStaff(), message, confirmLobbyStart);
