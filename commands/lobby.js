@@ -104,7 +104,7 @@ const lobbyScoring = createLobbyScoring({ Lobby: scoringStore.Lobby, Room: scori
   drawTable: require('../utils/drawTable') });
 const ffaTournament = createFfaTournament({ Lobby, Game: TournamentGame, Room, Sequence, Player, Rank,
   client, scoring: lobbyScoring, withRoomLock, findRoomChannel, getRoomChannel,
-  clearRoomMemberPermissions, releaseRoom, generateTracks, generateTemplate,
+  clearRoomMemberPermissions, releaseRoom, generateTracks, generateTemplate, getLobbyNumber,
   removeOtherQueues: removeFfaPlayersFromOtherQueues,
   endTournament: (doc, message) => deleteLobby(doc, message),
   cancelTournament: (doc) => deleteLobby(doc, null, false, true),

@@ -3,10 +3,11 @@ const { seedGames, nextGames, scoreOrder } = require('./ffaBracket');
 const { readTemplate, ordinal } = require('./scoreTable');
 const { rulesets } = require('../db/rulesets');
 const { engineStyles } = require('../db/engine_styles');
+const { tournamentTableTitle, applyTournamentTableTitle } = require('./tournamentTableTitle');
 
 function createFfaTournament({ Lobby, Game, Room, Sequence, Player, Rank, client,
   scoring, withRoomLock, findRoomChannel, clearRoomMemberPermissions,
-  releaseRoom, generateTracks, generateTemplate, renderOverview, removeOtherQueues, endTournament, cancelTournament,
+  releaseRoom, generateTracks, generateTemplate, getLobbyNumber, renderOverview, removeOtherQueues, endTournament, cancelTournament,
   log = console.error }) {
   const jobs = new AsyncLock();
   const keeperPrompts = new Map();
@@ -68,8 +69,9 @@ function createFfaTournament({ Lobby, Game, Room, Sequence, Player, Rank, client
         .filter((value) => value && Number.isFinite(value.rank)).map((value) => value.rank) : [];
       seeds.push({ discordId, rating: ratings.length ? Math.max(...ratings) : 1200 });
     }
+    const number = await getLobbyNumber(parent.type);
     return Lobby.findOneAndUpdate({ _id: parent._id, started: true, ffaManaged: { $ne: true } }, {
-      $set: { ffaManaged: true, ffaOriginalPlayers: [...parent.players], ffaSeeds: seeds,
+      $set: { number, ffaManaged: true, ffaOriginalPlayers: [...parent.players], ffaSeeds: seeds,
         ffaGroups: seedGames(seeds), ffaRound: 1, ffaPhase: 'preparing', ffaTracks: [] },
     }, { new: true });
   }
@@ -159,11 +161,13 @@ function createFfaTournament({ Lobby, Game, Room, Sequence, Player, Rank, client
         const pinned = await channel.messages.fetchPinned();
         for (const message of pinned.values()) if (message.author.id === client.user.id) await message.unpin();
       }
-      await patchGame(game._id, { scoringChannelId: channel.id, posted: game.posted });
+      await patchGame(game._id, { scoringChannelId: channel.id, posted: game.posted,
+        scoringTitle: tournamentTableTitle(parent, room.number) });
       game = await Game.findOne({ _id: game._id, started: true });
       if (!game) throw new Error('Tournament game ended during preparation.');
       if (!game.posted) {
-        const [psns, , template] = await generateTemplate(game.players, parent, []);
+        const [psns, , originalTemplate] = await generateTemplate(game.players, parent, []);
+        const template = applyTournamentTableTitle(originalTemplate, game.scoringTitle);
         const roster = game.players.map((id) => `<@${id}>`).join('\n');
         const ruleset = rulesets.find((entry) => entry.id === parent.ruleset);
         const engine = engineStyles.find((entry) => entry.key === parent.engineRestriction);

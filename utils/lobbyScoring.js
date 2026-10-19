@@ -1,5 +1,6 @@
 const defaultBuilders = require('discord-buttons');
 const { randomBytes } = require('crypto');
+const { applyTournamentTableTitle } = require('./tournamentTableTitle');
 const {
   readTemplate, readImport, extractTemplate, scoreRace, raceAwards, penaltyDeduction, rankGroups, ordinal,
 } = require('./scoreTable');
@@ -129,7 +130,7 @@ function createLobbyScoring({
   }
 
   function validate(doc, text, initial = false) {
-    const table = readTemplate(text, doc.scoringRoster, initial);
+    const table = readTemplate(applyTournamentTableTitle(text, doc.scoringTitle), doc.scoringRoster, initial);
     if (table.races > doc.trackCount) throw new Error('The score table contains too many races.');
     return table;
   }
@@ -374,6 +375,7 @@ function createLobbyScoring({
   }
 
   async function postResults(doc, channel, text, status) {
+    text = applyTournamentTableTitle(text, doc.scoringTitle);
     if (text.length + 8 > 4096) throw new Error('The score template is too long to display in one code block.');
     const image = await drawTable(text);
     return channel.send({

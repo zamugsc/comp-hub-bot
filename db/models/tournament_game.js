@@ -26,6 +26,7 @@ const TournamentGame = new Schema({
   scorekeeperId: { type: String, default: null },
   scoringEnabled: { type: Boolean, default: false },
   scoringChannelId: String,
+  scoringTitle: String,
   scoringTemplateMessageId: String,
   scoringMessageId: String,
   scoringBackup: String,

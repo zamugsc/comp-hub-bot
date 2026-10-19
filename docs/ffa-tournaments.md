@@ -10,6 +10,16 @@ with game-room links and the number of confirmed games. Rooms come from the
 normal `lobby-room-N` pool. Match numbers in the bracket are independent of the
 physical channel number. There is no extra hub channel.
 
+Each game's table uses an identifier such as
+`FFA Tournament #274 - Round of 64 - Room #5`. The tournament takes one number
+from the same per-mode counter as normal FFA lobbies, then retains it across
+all games and rounds. The room number identifies the actual `lobby-room-N`
+channel. The mode label comes from the tournament's mode name. Text results,
+rendered score images and submissions retain this header. Existing managed
+events keep their saved event number; after loading this code, future score
+saves and submissions identify their current stage and room without clearing
+previously saved races.
+
 ## Draw and bracket
 
 The opening draw sorts each player's highest **current** rating across all modes
