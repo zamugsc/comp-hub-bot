@@ -83,7 +83,11 @@ scores withdraws that confirmation while the round is still active.
 In the final room, use `!l end` or `!l advance @winner`, with the same scoring and
 permission checks. Creating the tournament does not grant finish-confirmation
 permission; its creator must also be that game's scorekeeper or staff.
-The final saved-race message repeats the relevant finish command.
+After the scorekeeper presses either submission button, a separate message below
+the buttons shows the relevant advance or finish command. Unranked games have no
+submission buttons, so their reminder appears separately after the last race is saved.
+If scores are edited after submission, the reminder appears on a new line below
+the notice linking to the existing submission.
 Every ranked game in every round gets its own optional
 results-submission prompt. Submission does not block advancement. Old prompts
 remain usable after room reuse or bot restart, including after the event ends;

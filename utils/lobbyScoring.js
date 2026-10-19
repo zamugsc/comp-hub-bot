@@ -419,8 +419,10 @@ function createLobbyScoring({
     if (!doc.ranked || !doc.scoringEnabled || endBlockReason(doc)) return;
     const submitted = submittedResult(doc);
     if (submitted) {
-      await channel.send(`${submitted.sourceId !== doc.scoringMessageId
-        ? 'Scores were re-saved after submission. Check the existing submission with staff:' : 'Scores already submitted:'} ${submissionLink(doc, submitted)}`);
+      const edited = submitted.sourceId !== doc.scoringMessageId;
+      const reminder = edited && tournamentFinishReminder(doc);
+      await channel.send(`${edited
+        ? 'Scores were re-saved after submission. Check the existing submission with staff:' : 'Scores already submitted:'} ${submissionLink(doc, submitted)}${reminder ? `\n${reminder}` : ''}`);
       return;
     }
     await restoreSubmissionOffer(doc, channel);
@@ -446,6 +448,22 @@ function createLobbyScoring({
     }
   }
 
+  function tournamentFinishReminder(doc) {
+    if (!doc.tournamentId || !doc.started || doc.completed || doc.finished) return '';
+    return `Scorekeeper or staff: ${doc.final
+      ? 'finish the tournament here with `!l end` or `!l advance @winner`.'
+      : 'confirm the top four here with `!l advance @p1 @p2 @p3 @p4`. The next round starts after every group confirms.'}`;
+  }
+
+  async function remindTournamentFinish(doc, channel) {
+    const reminder = tournamentFinishReminder(doc);
+    if (!reminder) return;
+    await channel.send({
+      content: reminder,
+      allowedMentions: { parse: [] },
+    });
+  }
+
   async function submitScores(doc, channel, messageId, manual) {
     if (!doc.ranked) throw new Error('Automatic submission is only available for ranked lobbies using High IQ Scoring.');
     await restoreSubmissionOffer(doc, channel);
@@ -457,11 +475,13 @@ function createLobbyScoring({
     if (blocked) throw new Error(blocked);
     if (manual) {
       await closeSubmissionOffer(doc, `Submit the finished scores yourself to <#${offer.channelId}>.`);
+      await remindTournamentFinish(doc, channel);
       return;
     }
     const existing = submittedResult(doc);
     if (existing) {
       await closeSubmissionOffer(doc, `Scores already submitted: ${submissionLink(doc, existing)}`);
+      await remindTournamentFinish(doc, channel);
       return;
     }
     const destination = await getSubmissionChannel(doc.guild);
@@ -485,6 +505,7 @@ function createLobbyScoring({
       sentSubmissions.delete(idOf(doc));
     } catch (error) { log('Scores were submitted, but their message reference could not be saved:', error); }
     await closeSubmissionOffer(doc, `Scores submitted: ${submissionLink(doc, record)}`);
+    await remindTournamentFinish(doc, channel);
   }
 
   function forgetSubmission(doc) {
@@ -1051,20 +1072,18 @@ function createLobbyScoring({
       const text = scoreRace(table, doc.scoringRoster, state.groups, state.race,
         pointsFor(doc.type, doc.players.length), isBattle(doc), state.penalties);
       const completed = Math.max(table.races, state.race);
-      const finishReminder = completed === doc.trackCount && doc.tournamentId
-        ? `\nScorekeeper or staff: ${doc.final
-          ? 'finish the tournament here with `!l end` or `!l advance @winner`.'
-          : 'confirm the top four here with `!l advance @p1 @p2 @p3 @p4`. The next round starts after every group confirms.'}`
-        : '';
       const posted = await postResults(doc, channel, text,
         `✅ ${raceTitle(doc)} ${state.race} saved — ${mapLabel(doc, state.race)}. ${completed} / ${doc.trackCount} ${raceWord(doc)}s scored.${
-          completed === doc.trackCount ? `\nAll ${raceWord(doc)}s scored. Double-check the final scores before submitting.` : ''}${finishReminder}`);
+          completed === doc.trackCount ? `\nAll ${raceWord(doc)}s scored. Double-check the final scores before submitting.` : ''}`);
       await update(doc, {
         scoringMessageId: posted.id, scoringBackup: text, scoringPanelId: null, scoringRecoveryId: null,
       });
       penaltyHistory.delete(idOf(doc));
       await deletePanel(doc, channel, panel.id);
-      if (completed === doc.trackCount) await tryOfferSubmission(doc, channel);
+      if (completed === doc.trackCount) {
+        await tryOfferSubmission(doc, channel);
+        if (!doc.ranked) await remindTournamentFinish(doc, channel);
+      }
       return 'Scores saved.';
     } else throw new Error('Unknown scoring action.');
     await panel.edit(panelPayload(doc, state, history));
