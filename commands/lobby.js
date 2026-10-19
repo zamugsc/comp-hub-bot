@@ -11,6 +11,7 @@ const {
 } = require('../db/buttons');
 const {
   RACE_ITEMS_DUOS,
+  DUO_TOURNAMENT_TYPES,
   RACE_ITEMS_3V3,
   RACE_ITEMS_4V4,
   RACE_SURVIVAL,
@@ -58,7 +59,7 @@ const { pointsFor } = require('../db/race_points');
 const getConfigValue = require('../utils/getConfigValue');
 const getLorenziBoardData = require('../utils/getLorenziBoardData');
 const greedyPartition = require('../utils/greedyPartition');
-const { validateDuoRoster, validateDuoRound, balanceDuoGroups, getAdvancingDuos, splitTournamentFields } = require('../utils/duoTournament');
+const { DUO_TOURNAMENT_SIZES, validateDuoRoster, validateDuoRound, balanceDuoGroups, getAdvancingDuos, splitTournamentFields } = require('../utils/duoTournament');
 const {
   withRoomLock,
   getRoomChannel,
@@ -281,7 +282,7 @@ async function getAverageRank(doc) {
  * @returns Promise
  */
 async function getEmbed(doc, players, tracks, roomChannel) {
-  const duoTournament = doc.isTournament() && doc.type === RACE_ITEMS_DUOS;
+  const duoTournament = doc.isTournament() && DUO_TOURNAMENT_TYPES.includes(doc.type);
   let playersText = 'No players.';
   let psnAndRanks = 'No players.';
 
@@ -977,10 +978,13 @@ async function createPatchworkTeams(doc) {
  * @returns Promise<void>
  */
 async function setupDuoTournamentRound(doc, roomChannel) {
-  if (!doc.isTournament() || doc.maxPlayerCount !== 16 || ![8, 16].includes(doc.players.length)) {
-    throw new Error('The duo tournament pilot requires 16 starting players and an 8-player final.');
+  if (!doc.isTournament() || !DUO_TOURNAMENT_TYPES.includes(doc.type)
+    || !DUO_TOURNAMENT_SIZES.includes(doc.maxPlayerCount)
+    || ![8, ...DUO_TOURNAMENT_SIZES].includes(doc.players.length)
+    || doc.players.length > doc.maxPlayerCount) {
+    throw new Error('Duo tournaments require 16, 32 or 64 starting players and halve each round to an 8-player final.');
   }
-  validateDuoRoster(doc.players, doc.teamList, doc.players.length === 16);
+  validateDuoRoster(doc.players, doc.teamList, doc.players.length === doc.maxPlayerCount);
   if (doc.getSoloPlayers().length) {
     const newTeams = doc.teamCreation === TEAM_CREATION_BALANCED
       ? await createBalancedTeams(doc) : await createRandomTeams(doc);
@@ -988,13 +992,13 @@ async function setupDuoTournamentRound(doc, roomChannel) {
   }
   validateDuoRoster(doc.players, doc.teamList);
 
-  // Group placement uses each pair's mean normal-duos rating, not the highest
-  // rating across other modes used by the existing solo-pairing algorithm.
+  // Pair creation keeps the existing highest-rating algorithm. Game placement
+  // and displayed ratings use the tournament's own leaderboard mode.
   const ratings = new Map();
   for (const player of doc.players) {
     const record = await Player.findOne({ discordId: player });
     const rank = record && await Rank.findOne({ name: record.rankedName });
-    const rating = rank && rank[RACE_ITEMS_DUOS] && rank[RACE_ITEMS_DUOS].rank;
+    const rating = rank && rank[doc.type] && rank[doc.type].rank;
     ratings.set(player, Number.isFinite(rating) ? rating : doc.getDefaultRank());
   }
   if (!doc.tournamentGroups.length) {
@@ -1013,6 +1017,8 @@ async function setupDuoTournamentRound(doc, roomChannel) {
     if (pinned.author.id === client.user.id) await pinned.unpin();
   }
   const final = doc.players.length === 8;
+  const name = doc.isInsta() ? 'Insta Duos' : 'Duos';
+  const stage = { 8: 'Final', 16: 'Semifinal', 32: 'Quarterfinal', 64: 'Round of 64 - Game' }[doc.players.length];
   const ruleset = rulesets.find((rule) => rule.id === doc.ruleset);
   for (let i = 0; i < doc.tournamentGroups.length; i += 1) {
     const group = doc.tournamentGroups[i];
@@ -1032,7 +1038,7 @@ async function setupDuoTournamentRound(doc, roomChannel) {
       { name: 'Settings', value: `Lap Count: ${doc.lapCount}\nRuleset: ${ruleset.name}`, inline: true },
       {
         name: 'Advancement',
-        value: final ? 'The highest-scoring duo wins.' : 'The top two duos from each semifinal advance to the final.',
+        value: final ? 'The highest-scoring duo wins.' : `The top two duos from each game advance to ${doc.players.length === 16 ? 'the final' : 'the next round'}.`,
       },
     ];
     const code = `\`\`\`${template}\`\`\``;
@@ -1042,12 +1048,12 @@ async function setupDuoTournamentRound(doc, roomChannel) {
     if (code.length <= 1024) fields.push({ name: 'Score Template', value: code });
     if (link.length <= 1024) fields.push({ name: 'Score Table', value: link });
     if (code.length > 1024 || link.length > 1024) {
-      files.push({ attachment: Buffer.from(template, 'utf8'), name: `duos-${final ? 'final' : `semifinal-${i + 1}`}.txt` });
+      files.push({ attachment: Buffer.from(template, 'utf8'), name: `duos-${final ? 'final' : `round-of-${doc.players.length}-${i + 1}`}.txt` });
       fields.push({ name: 'Full Score Template', value: 'Copy the score template from the attached text file.' });
     }
     const posted = await roomChannel.send({
       content: players.map((id) => `<@${id}>`).join(', '),
-      embed: { color: doc.getColor(), title: final ? 'Duos Tournament Final' : `Duos Tournament Semifinal ${i + 1}`, fields: splitTournamentFields(fields) },
+      embed: { color: doc.getColor(), title: `${name} Tournament ${stage}${final ? '' : ` ${i + 1}`}`, fields: splitTournamentFields(fields) },
       files,
     });
     await posted.pin();
@@ -1061,7 +1067,7 @@ async function advanceDuoTournament(lobbyId, message) {
   return lock.acquire(`tournament:${lobbyId}`, async () => {
     // Read under the lock so two commands cannot advance the same round twice.
     const doc = await Lobby.findOne({ _id: lobbyId });
-    if (!doc || !doc.started || !doc.isTournament() || doc.type !== RACE_ITEMS_DUOS) {
+    if (!doc || !doc.started || !doc.isTournament() || !DUO_TOURNAMENT_TYPES.includes(doc.type)) {
       return message.channel.warn('This is not a started duo tournament.');
     }
     if (!message.member.isStaff() && doc.creator !== message.author.id) {
@@ -1098,7 +1104,7 @@ async function advanceDuoTournament(lobbyId, message) {
     doc.tournamentRoundReady = false;
     await saveTournamentAdvancement(client.guilds.cache.get(doc.guild), doc, previousPlayers);
     await setupTournamentRound(doc, channel);
-    return message.channel.success(`The final is starting! Advancing duos: ${winners}`);
+    return message.channel.success(`The ${doc.players.length === 8 ? 'final' : 'next round'} is starting! Advancing duos: ${winners}`);
   }).catch(async (error) => {
     console.error('Could not advance duo tournament:', error);
     await message.channel.error(`Could not update the tournament. If round messages are missing, retry \`!l advance ${lobbyId}\` without mentions. Ask staff to check the lobby if the error continues.`);
@@ -1106,7 +1112,7 @@ async function advanceDuoTournament(lobbyId, message) {
 }
 
 async function setupTournamentRound(doc, roomChannel) {
-  if (doc.type === RACE_ITEMS_DUOS) {
+  if (DUO_TOURNAMENT_TYPES.includes(doc.type)) {
     return setupDuoTournamentRound(doc, roomChannel);
   }
   const pinnedMessages = await roomChannel.messages.fetchPinned();
@@ -1545,9 +1551,9 @@ function confirmLobbyStart(doc, message, override = false) {
     return message.channel.warn('FFA tournaments require all selected places to be filled: 16, 32 or 64 players.');
   }
 
-  if (doc.isTournament() && doc.type === RACE_ITEMS_DUOS
-    && (playersCount !== 16 || doc.maxPlayerCount !== 16)) {
-    return message.channel.warn('The duo tournament pilot requires exactly 16 players.');
+  if (doc.isTournament() && DUO_TOURNAMENT_TYPES.includes(doc.type)
+    && (!DUO_TOURNAMENT_SIZES.includes(doc.maxPlayerCount) || playersCount !== doc.maxPlayerCount)) {
+    return message.channel.warn('Duo tournaments require all selected places to be filled: 16, 32 or 64 players.');
   }
 
   if (doc.isDuos() && playersCount % 2 !== 0) {
@@ -1867,8 +1873,8 @@ module.exports = {
               {
                 key: LOBBY_MODE_TOURNAMENT,
                 name: 'Tournament Lobby',
-                description: selectedType === RACE_ITEMS_DUOS
-                  ? 'Duo tournaments have exactly 16 players (8 duos).'
+                description: DUO_TOURNAMENT_TYPES.includes(selectedType)
+                  ? 'Duo tournaments support 16, 32 or 64 players (8, 16 or 32 duos).'
                   : 'Tournament Lobbies can have up to 64 players.',
                 default: false,
               },
@@ -2387,7 +2393,7 @@ module.exports = {
           }
           if (doc.ffaManaged || doc.ffaPhase === 'preparing') return ffaTournament.retry(doc, message);
 
-          if (doc.type === RACE_ITEMS_DUOS) {
+          if (DUO_TOURNAMENT_TYPES.includes(doc.type)) {
             return advanceDuoTournament(doc.id, message);
           }
 
@@ -2854,8 +2860,8 @@ async function mogi(reaction, user, removed = false) {
           let players = Array.from(doc.players);
           const playersCount = players.length;
 
-          if (doc.mode === 'tournament' && doc.type === RACE_ITEMS_DUOS
-            && (doc.started || doc.closed || (!removed && playersCount >= 16))) {
+          if (doc.mode === 'tournament' && DUO_TOURNAMENT_TYPES.includes(doc.type)
+            && (doc.started || doc.closed || (!removed && playersCount >= doc.maxPlayerCount))) {
             return;
           }
 

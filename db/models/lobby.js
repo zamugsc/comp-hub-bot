@@ -57,6 +57,7 @@ const TEAM_CREATION_BALANCED = 'balanced';
 const TEAM_CREATION_RANDOM = 'random';
 
 const DUO_MODES = [RACE_ITEMS_DUOS, RACE_ITEMLESS_DUOS, BATTLE_DUOS];
+const DUO_TOURNAMENT_TYPES = [RACE_ITEMS_DUOS, INSTA_DUOS];
 const _3V3_MODES = [RACE_ITEMS_3V3, RACE_ITEMLESS_3V3, BATTLE_3V3];
 const _4V4_MODES = [RACE_ITEMS_4V4, RACE_ITEMLESS_4V4, BATTLE_4V4];
 
@@ -168,6 +169,7 @@ module.exports.TRACK_MEGAMIX_MANIA = TRACK_MEGAMIX_MANIA;
 module.exports.ARENA_FROZEN_FRENZY = ARENA_FROZEN_FRENZY;
 module.exports.ARENA_MAGNETIC_MAYHEM = ARENA_MAGNETIC_MAYHEM;
 module.exports.DUO_MODES = DUO_MODES;
+module.exports.DUO_TOURNAMENT_TYPES = DUO_TOURNAMENT_TYPES;
 module.exports._3V3_MODES = _3V3_MODES;
 module.exports._4V4_MODES = _4V4_MODES;
 module.exports.TEAM_CREATION_BALANCED = TEAM_CREATION_BALANCED;
@@ -567,7 +569,7 @@ Lobby.methods = {
     if (this.isTournament()) {
       maxPlayers = {
         [RACE_ITEMS_FFA]: 64,
-        [RACE_ITEMS_DUOS]: 16,
+        [RACE_ITEMS_DUOS]: 64,
         [RACE_ITEMS_3V3]: 48,
         [RACE_ITEMS_4V4]: 64,
         [RACE_SURVIVAL]: 64,
@@ -974,7 +976,7 @@ Lobby.methods = {
       TRACK_OPTION_POOLS,
     ];
 
-    if (!(this.isTournament() && this.type === RACE_ITEMS_DUOS)
+    if (!(this.isTournament() && DUO_TOURNAMENT_TYPES.includes(this.type))
       && ![RACE_ITEMLESS_FFA, BATTLE_1V1, BATTLE_FFA].includes(this.type)) {
       availableTrackOptions.push(TRACK_OPTION_DRAFT);
     }
@@ -1059,7 +1061,7 @@ Lobby.methods = {
       [BATTLE_DUOS]: false,
       [BATTLE_3V3]: false,
       [BATTLE_4V4]: false,
-      [INSTA_DUOS]: false,
+      [INSTA_DUOS]: true,
       [INSTA_3V3]: false,
       [INSTA_4V4]: false,
     };

@@ -1,4 +1,5 @@
 const greedyPartition = require('./greedyPartition');
+const DUO_TOURNAMENT_SIZES = [16, 32, 64];
 
 function validateDuoRoster(players, teams, allowSolos = false) {
   const paired = teams.flat();
@@ -26,8 +27,10 @@ function validateDuoRound(doc) {
   const final = doc.players.length === 8;
   const groups = doc.tournamentGroups;
   const grouped = groups.flat();
-  if (![8, 16].includes(doc.players.length)
-    || groups.length !== (final ? 1 : 2)
+  if (!DUO_TOURNAMENT_SIZES.includes(doc.maxPlayerCount)
+    || ![8, ...DUO_TOURNAMENT_SIZES].includes(doc.players.length)
+    || doc.players.length > doc.maxPlayerCount
+    || groups.length !== doc.players.length / 8
     || groups.some((group) => group.length !== 8)
     || new Set(grouped).size !== doc.players.length
     || grouped.some((player) => !doc.players.includes(player))
@@ -45,13 +48,13 @@ function getAdvancingDuos(doc, mentions) {
   }
   // Either member identifies the pair. Mentioning both still selects just one duo.
   const teams = doc.teamList.filter((team) => team.some((player) => mentions.includes(player)));
-  if (teams.length !== (final ? 1 : 4)) {
+  if (teams.length !== (final ? 1 : doc.players.length / 4)) {
     throw new Error(final
       ? 'Mention either player of the winning duo.'
-      : 'Mention either player of each advancing duo: two duos from each semifinal (four duos total).');
+      : `Mention either player of each advancing duo: two duos from each game (${doc.players.length / 4} duos total).`);
   }
   if (!final && groups.some((group) => teams.filter((team) => group.includes(team[0])).length !== 2)) {
-    throw new Error('Exactly two duos must advance from each semifinal.');
+    throw new Error('Exactly two duos must advance from each game.');
   }
   return teams.map((team) => [...team]);
 }
@@ -73,4 +76,4 @@ function splitTournamentFields(fields) {
   });
 }
 
-module.exports = { validateDuoRoster, validateDuoRound, balanceDuoGroups, getAdvancingDuos, splitTournamentFields };
+module.exports = { DUO_TOURNAMENT_SIZES, validateDuoRoster, validateDuoRound, balanceDuoGroups, getAdvancingDuos, splitTournamentFields };
