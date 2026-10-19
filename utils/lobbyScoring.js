@@ -561,13 +561,12 @@ function createLobbyScoring({
         content: method === 'manual'
           ? `**${mention(userId)}** has volunteered to do scores, using the old ${lowIqEmoji} method.`
           : `${mention(userId)} has volunteered to do scores.${
-            current.tournamentId ? '\n**High IQ Scoring** enabled. Use `!l score` to enter scores.'
-            : components.length ? '\nWould you like to use **High IQ Scoring**, or keep manual scoring?' : ''}`,
+            components.length ? '\nWould you like to use **High IQ Scoring**, or keep manual scoring?' : ''}`,
         components,
         allowedMentions: { users: [userId] },
       });
       if (!chosen) await update(current, { scoringOfferId: announcement.id });
-      if (method === 'highiq') await channel.send(activationGuide(current));
+      if (current.tournamentId || method === 'highiq') await channel.send(activationGuide(current));
     });
   }
 

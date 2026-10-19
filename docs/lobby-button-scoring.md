@@ -13,7 +13,10 @@ and opens the scoring panel immediately. Further calls resume the current entry.
 The saved scoring setup and scores are preserved; use `!t import` below to explicitly
 import an edited manual template. Previously posted scoring-choice buttons remain
 compatible. Message prose uses **High IQ Scoring**;
-button labels use plain text. Tournaments, survival and 1v1 retain manual scoring. Default formats:
+button labels use plain text. New normal-items FFA tournaments with 16, 32 or 64
+players enable High IQ Scoring when each game's scorekeeper volunteers and post
+the same activation guide automatically; see [FFA tournament rooms](ffa-tournaments.md).
+Other tournament formats, survival and 1v1 retain manual scoring. Default formats:
 
 | Format | Players | Default races/arenas | Points from first to last |
 | --- | --- | --- | --- |
