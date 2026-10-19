@@ -59,7 +59,42 @@ function getAdvancingDuos(doc, mentions) {
   return teams.map((team) => [...team]);
 }
 
-// Keep the 16-player pilot's roster fields readable without changing larger FFA signups.
+// Balance whole teams and solo entries across two columns, with at most 24 lines per column.
+function splitTournamentRoster(field, blocks) {
+  if (blocks.length < 2) return [field];
+  const lineCounts = blocks.map((block) => block.split('\n').length);
+  let remainingLines = lineCounts.reduce((sum, count) => sum + count, 0);
+  const minimumColumns = Math.max(2, Math.ceil(remainingLines / 24));
+  const columnCount = minimumColumns + minimumColumns % 2;
+  const fields = [];
+  let offset = 0;
+  for (let column = 0; column < columnCount; column += 1) {
+    const remainingColumns = columnCount - column;
+    const target = remainingLines / remainingColumns;
+    let count = 1;
+    let lines = lineCounts[offset];
+    // Pick the closest whole-block boundary while reserving an entry for each later column.
+    while (offset + count < blocks.length - remainingColumns + 1) {
+      const nextLines = lineCounts[offset + count];
+      if (lines + nextLines > 24 || Math.abs(lines - target) <= Math.abs(lines + nextLines - target)) break;
+      lines += nextLines;
+      count += 1;
+    }
+    fields.push({
+      ...field,
+      name: column ? 'Players (continued)' : field.name,
+      value: blocks.slice(offset, offset + count).join('\n'),
+      inline: true,
+    });
+    offset += count;
+    remainingLines -= lines;
+    // A full-width separator keeps the next row or lobby details out of this column pair.
+    if (column % 2 === 1) fields.push({ name: '\u200B', value: '\u200B', inline: false });
+  }
+  return fields;
+}
+
+// Keep duo tournament fields below Discord's field limit.
 function splitTournamentFields(fields) {
   return fields.flatMap((field) => {
     if (typeof field.value !== 'string' || field.value.length <= 1024) return [field];
@@ -76,4 +111,4 @@ function splitTournamentFields(fields) {
   });
 }
 
-module.exports = { DUO_TOURNAMENT_SIZES, validateDuoRoster, validateDuoRound, balanceDuoGroups, getAdvancingDuos, splitTournamentFields };
+module.exports = { DUO_TOURNAMENT_SIZES, validateDuoRoster, validateDuoRound, balanceDuoGroups, getAdvancingDuos, splitTournamentRoster, splitTournamentFields };

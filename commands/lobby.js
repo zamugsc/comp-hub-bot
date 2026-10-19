@@ -59,7 +59,7 @@ const { pointsFor } = require('../db/race_points');
 const getConfigValue = require('../utils/getConfigValue');
 const getLorenziBoardData = require('../utils/getLorenziBoardData');
 const greedyPartition = require('../utils/greedyPartition');
-const { DUO_TOURNAMENT_SIZES, validateDuoRoster, validateDuoRound, balanceDuoGroups, getAdvancingDuos, splitTournamentFields } = require('../utils/duoTournament');
+const { DUO_TOURNAMENT_SIZES, validateDuoRoster, validateDuoRound, balanceDuoGroups, getAdvancingDuos, splitTournamentRoster, splitTournamentFields } = require('../utils/duoTournament');
 const {
   withRoomLock,
   getRoomChannel,
@@ -281,10 +281,12 @@ async function getAverageRank(doc) {
  * @param roomChannel
  * @returns Promise
  */
-async function getEmbed(doc, players, tracks, roomChannel) {
+async function getEmbed(doc, players, tracks, roomChannel, compactRoster = false) {
   const duoTournament = doc.isTournament() && DUO_TOURNAMENT_TYPES.includes(doc.type);
+  const compactTournamentSignup = doc.isTournament() && (!doc.started || compactRoster);
   let playersText = 'No players.';
   let psnAndRanks = 'No players.';
+  const rosterBlocks = [];
 
   const playersInfo = {};
 
@@ -334,10 +336,11 @@ async function getEmbed(doc, players, tracks, roomChannel) {
         mmrSum += info.rank;
       });
 
+      let teamText;
       if (doc.ranked && (!doc.anonymous || doc.started)) {
-        playersText += `**Team ${i + 1} [Rating: ${Math.floor(mmrSum / team.length)}]**\n`;
+        teamText = `**Team ${i + 1} [${compactTournamentSignup ? '' : 'Rating: '}${Math.floor(mmrSum / team.length)}]**\n`;
       } else {
-        playersText += `**Team ${i + 1}**\n`;
+        teamText = `**Team ${i + 1}**\n`;
       }
 
       /* Fill the remaining spots with "Open" spots */
@@ -351,22 +354,27 @@ async function getEmbed(doc, players, tracks, roomChannel) {
       team.forEach((player, x) => {
         const info = playersInfo[player];
         const tag = info && info.tag;
-        playersText += `${x + 1}. ${tag}\n`;
+        teamText += `${x + 1}. ${tag}\n`;
         delete playersInfo[player];
       });
+      playersText += teamText;
+      rosterBlocks.push(teamText.trimEnd());
     });
 
     if (Object.keys(playersInfo).length) {
       playersText += '**Solo Queue:**\n';
-      Object.entries(playersInfo).forEach(([, value]) => {
+      Object.entries(playersInfo).forEach(([, value], i) => {
         playersText += `${value.tag}\n`;
+        rosterBlocks.push(`${i ? '' : '**Solo Queue:**\n'}${value.tag}`);
       });
     }
   }
 
   let fields;
 
-  const iconUrl = doc.getIcon();
+  const iconUrl = compactTournamentSignup ? undefined : doc.getIcon();
+  const footer = { ...getFooter(doc) };
+  if (compactTournamentSignup) delete footer.icon_url;
   const creator = await Player.findOne({ discordId: doc.creator });
   const timestamp = doc.started ? doc.startedAt : doc.date;
   const engineRestriction = engineStyles.find((e) => e.key === doc.engineRestriction);
@@ -380,10 +388,12 @@ async function getEmbed(doc, players, tracks, roomChannel) {
   });
 
   const playersField = {
-    name: `:busts_in_silhouette: Players (${doc.players.length} / ${doc.maxPlayerCount})`,
+    name: `${compactTournamentSignup ? '' : ':busts_in_silhouette: '}Players (${doc.players.length} / ${doc.maxPlayerCount})`,
     value: playersText,
     inline: true,
   };
+  const playersFields = duoTournament && compactTournamentSignup && rosterBlocks.length
+    ? splitTournamentRoster(playersField, rosterBlocks) : [playersField];
 
   const psnsField = {
     name: `:credit_card: Ranked Information`,
@@ -411,20 +421,20 @@ async function getEmbed(doc, players, tracks, roomChannel) {
 
   if (!doc.anonymous || doc.started) {
     creatorField = {
-      name: ':bust_in_silhouette: Creator',
-      value: `${creator && creator.flag ? creator.flag : ':united_nations:'} <@${doc.creator}>`,
+      name: compactTournamentSignup ? 'Creator' : ':bust_in_silhouette: Creator',
+      value: compactTournamentSignup ? `<@${doc.creator}>` : `${creator && creator.flag ? creator.flag : ':united_nations:'} <@${doc.creator}>`,
       inline: true,
     };
   } else {
     creatorField = {
-      name: ':bust_in_silhouette: Creator',
-      value: ':united_nations: ???',
+      name: compactTournamentSignup ? 'Creator' : ':bust_in_silhouette: Creator',
+      value: compactTournamentSignup ? '???' : ':united_nations: ???',
       inline: true,
     };
   }
 
   const averageRankField = {
-    name: ':checkered_flag: Average Rank',
+    name: compactTournamentSignup ? 'Average Rank' : ':checkered_flag: Average Rank',
     value: await getAverageRank(doc),
     inline: true,
   };
@@ -440,7 +450,7 @@ async function getEmbed(doc, players, tracks, roomChannel) {
 
   if (doc.isRacing()) {
     settings.push(`Lap Count: **${doc.lapCount}**`);
-    settings.push(`Ruleset: ${ruleset.emote} **${ruleset.name}**`);
+    settings.push(`Ruleset: ${compactTournamentSignup ? '' : `${ruleset.emote} `}**${ruleset.name}**`);
 
     if (engineRestriction) {
       settings.push(`Engine Style: **${engineRestriction.emote}**`);
@@ -470,7 +480,7 @@ async function getEmbed(doc, players, tracks, roomChannel) {
 
   if (settings.length > 0) {
     settingsField = {
-      name: ':video_game: Lobby Settings',
+      name: compactTournamentSignup ? 'Lobby Settings' : ':video_game: Lobby Settings',
       value: settings.join('\n'),
       inline: true,
     };
@@ -478,9 +488,9 @@ async function getEmbed(doc, players, tracks, roomChannel) {
 
   if (tracks) {
     fields = [
-      playersField,
-      psnsField,
-      tracksField,
+      ...playersFields,
+      ...(compactTournamentSignup ? [] : [psnsField]),
+      ...(duoTournament && compactTournamentSignup && Array.isArray(tracks) && !tracks.length ? [] : [tracksField]),
       roomField,
       creatorField,
     ];
@@ -521,7 +531,7 @@ async function getEmbed(doc, players, tracks, roomChannel) {
       },
       fields: doc.isTournament() && doc.isSolos() ? tournamentSignupFields(fields)
         : duoTournament ? splitTournamentFields(fields) : fields,
-      footer: getFooter(doc),
+      footer,
       timestamp,
     };
   }
@@ -530,8 +540,8 @@ async function getEmbed(doc, players, tracks, roomChannel) {
     creatorField.inline = false;
 
     fields = [
-      playersField,
-      psnsField,
+      ...playersFields,
+      ...(compactTournamentSignup ? [] : [psnsField]),
       creatorField,
     ];
 
@@ -552,7 +562,7 @@ async function getEmbed(doc, players, tracks, roomChannel) {
       },
       fields: doc.isTournament() && doc.isSolos() ? tournamentSignupFields(fields)
         : duoTournament ? splitTournamentFields(fields) : fields,
-      footer: getFooter(doc),
+      footer,
       timestamp,
     };
   }
@@ -572,7 +582,7 @@ async function getEmbed(doc, players, tracks, roomChannel) {
       icon_url: iconUrl,
     },
     fields,
-    footer: getFooter(doc),
+    footer,
     timestamp,
   };
 }
@@ -1317,7 +1327,9 @@ function startLobby(docId) {
               await lock.acquire(`tournament:${doc.id}`, async () => {
                 await setupTournamentRound(doc, roomChannel);
                 await message.edit({
-                  embed: await getEmbed(doc, doc.players, tracks, roomChannel),
+                  // Keep duo rosters compact and their teams together when signup closes.
+                  embed: await getEmbed(doc, doc.players, tracks, roomChannel,
+                    DUO_TOURNAMENT_TYPES.includes(doc.type)),
                   components: [buttonRow],
                 });
               });
