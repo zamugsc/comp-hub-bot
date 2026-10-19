@@ -2704,34 +2704,33 @@ async function restrictSoloQueue(doc, user, soloQueue) {
   return errors;
 }
 
+async function handleLobbySignupButton(b) {
+  let channel;
+  try {
+    // Acknowledge before message fetches, queue locks and database work can delay the response.
+    await b.reply.defer(true);
+    channel = client.guilds.cache.get(b.guild.id).channels.cache.get(b.message.channel.id);
+    const lobbyMessage = await channel.messages.fetch(b.message.id);
+    const reaction = { message: lobbyMessage, users: null };
+    // eslint-disable-next-line no-use-before-define
+    await mogi(reaction, b.clicker.user, b.id === 'leave_lobby');
+  } catch (error) {
+    console.error('Could not process lobby signup button:', error);
+    try {
+      if (channel) {
+        await channel.warn('Could not process that lobby action. Please try again or ask staff to check the error.', [b.clicker.user.id]);
+      }
+    } catch (notificationError) {
+      console.error('Could not report lobby signup error:', notificationError);
+    }
+  }
+}
+
 client.on('clickButton', async (b) => {
   switch (b.id) {
     case 'join_lobby':
-      // eslint-disable-next-line max-len
-      client.guilds.cache.get(b.guild.id).channels.cache.get(b.message.channel.id).messages.fetch(b.message.id).then(async (lobbyMessage) => {
-        const reaction = {
-          message: lobbyMessage,
-          users: null,
-        };
-
-        // eslint-disable-next-line no-use-before-define
-        await mogi(reaction, b.clicker.user);
-        await b.reply.defer(true);
-      });
-      break;
     case 'leave_lobby':
-      // eslint-disable-next-line max-len
-      client.guilds.cache.get(b.guild.id).channels.cache.get(b.message.channel.id).messages.fetch(b.message.id).then(async (lobbyMessage) => {
-        const reaction = {
-          message: lobbyMessage,
-          users: null,
-        };
-
-        // eslint-disable-next-line no-use-before-define
-        await mogi(reaction, b.clicker.user, true);
-        await b.reply.defer(true);
-      });
-      break;
+      return handleLobbySignupButton(b);
     case 'delete_lobby':
       // eslint-disable-next-line max-len
       client.guilds.cache.get(b.guild.id).channels.cache.get(b.message.channel.id).messages.fetch(b.message.id).then(async (lobbyMessage) => {
